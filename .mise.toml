@@ -1,0 +1,7 @@
+[tools]
+gitleaks = "8.30.1"
+lefthook = "2.1.12"
+
+[tasks.setup]
+description = "Install the Git hooks"
+run = "lefthook install"

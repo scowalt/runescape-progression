@@ -1,0 +1,6 @@
+.env
+.env.*
+!.env.example
+.mise.local.toml
+.DS_Store
+*.log
