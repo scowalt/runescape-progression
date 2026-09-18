@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
-    <Compile Include="Library.fs" />
+    <Compile Include="Domain.fs" />
+    <Compile Include="Validation.fs" />
+    <Compile Include="Planning.fs" />
   </ItemGroup>
 </Project>

@@ -2,7 +2,7 @@
 
 An Old School RuneScape planner that turns a selected goal into small, countable tasks. It seeks the fastest modeled route from the player's known state. A website and RuneLite plugin are long-term parts of the project. The future web address is `runesprout.app`.
 
-This private repository contains the approved v0 specification, supporting research, and an executable F# starting point: a CLI with help, a planner library with no domain behavior yet, and process-level xUnit tests. Route planning and game catalogs come in later tickets. The first planning milestone targets a members ironman account, verified with Cook's Assistant and controlled scenarios.
+This private repository contains the approved v0 specification, supporting research, a pure F# shortest-route planner verified in synthetic worlds, a help-only CLI, and xUnit tests. Game catalogs and CLI planning come in later tickets. The first application milestone targets a members ironman account, verified with Cook's Assistant and controlled scenarios.
 
 ## Start here
 
@@ -29,7 +29,7 @@ mise run test
 mise run help
 ```
 
-`build` includes locked restore and F# typechecking; `test` and `help` build first. The tests launch the built CLI in a separate process, checking help and rejection of unsupported commands. No development server is needed.
+`build` includes locked restore and F# typechecking; `test` and `help` build first. Tests exercise the public planning seam, compare tiny worlds with independent route enumeration, and launch the built CLI to check help and rejection of unsupported commands. No development server is needed.
 
 To invoke help directly:
 
@@ -37,13 +37,13 @@ To invoke help directly:
 mise exec -- dotnet run --project src/RuneSprout.Cli -- --help
 ```
 
-Only `--help` is supported: it exits 0 and explicitly states that planning is not implemented yet. Other arguments (including `plan`, or no arguments) exit 2 with usage guidance on stderr. There is no planning sample task yet. The domain acceptance scenarios remain requirements, not passing planner tests.
+Only `--help` is supported: it exits 0 and explicitly states that planning is not implemented yet. Other arguments (including `plan`, or no arguments) exit 2 with usage guidance on stderr. There is no planning sample task yet. Synthetic fixtures are test-only and cannot be selected through the CLI. Game-specific acceptance scenarios remain requirements, not passing planner tests. See [the planning seam](docs/planner.md) for the implemented model, guarantees, limitations, and focused test commands.
 
 ## Projects and reproducibility
 
-- `src/RuneSprout.Planner/`: library reserved for pure domain logic; no I/O or placeholder planning behavior.
+- `src/RuneSprout.Planner/`: pure domain inputs, validation, transitions, Dijkstra search, and route replay; no I/O or game records.
 - `src/RuneSprout.Cli/`: executable adapter, referencing the library.
-- `tests/RuneSprout.Tests/`: xUnit process tests, referencing the CLI so its executable and runtime files are built and copied for testing.
+- `tests/RuneSprout.Tests/`: xUnit planning/oracle and process tests, referencing the CLI so its executable and runtime files are built and copied for testing.
 
 .NET SDK `10.0.401` is pinned in `.mise.toml` and `global.json`, with SDK roll-forward disabled. It was selected from Microsoft's [.NET 10 release metadata](https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json) (2026-09-08 servicing release; active LTS). The explicit mise backend avoids ambiguity with machine-local `dotnet` aliases. Change both SDK pins together when updating.
 
