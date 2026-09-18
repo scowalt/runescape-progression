@@ -1,6 +1,7 @@
 module RuneSprout.Tests.OracleTests
 
 open RuneSprout.Planner
+open RuneSprout.Tests.SyntheticFixtures
 open Xunit
 
 // Independent oracle: enumerate ALL simple paths, not another shortest-path solver.
@@ -33,14 +34,6 @@ let private replay initial goal successors (plan: PersonalPlan) =
             | _ -> failwithf "Infeasible or ambiguous step %s from %A" id state) (initial, 0I)
     Assert.True(goal state, "Replay must complete the goal.")
     Assert.Equal(total, bigint plan.TotalEstimatedMilliseconds)
-
-let private action name requirements destination changes consumes produces =
-    { Id = ActivityId name
-      Requirements = requirements
-      Destination = destination
-      FactChanges = Map.ofList changes
-      Consumes = Map.ofList consumes
-      Produces = Map.ofList produces }
 
 let private assertOptimum world knowledge initial goal successors =
     let expected = enumerateMinimum initial goal successors
@@ -75,7 +68,8 @@ let ``all 4096 three-location worlds match independent path enumeration`` () =
               ResourceCapacities = Map.empty
               Goal = [ AtLocation(location 2) ]
               Activities =
-                edges |> List.map (fun (name, source, target, _) -> action name [ AtLocation(location source) ] (Some(location target)) [] [] [])
+                edges |> List.map (fun (name, source, target, _) ->
+                    { activity name [ AtLocation(location source) ] [] [] [] with Destination = Some(location target) })
               DurationEstimatesMs = edges |> List.map (fun (name, _, _, cost) -> ActivityId name, cost) |> Map.ofList }
         let knowledge = { Location = location 0; Facts = Map.empty; Resources = Map.empty }
         assertOptimum world knowledge 0 ((=) 2) successors |> ignore
@@ -91,9 +85,9 @@ let ``enumeration prices the cheapest isolated choice with all its preparation``
           ResourceCapacities = Map.ofList [ token, 1L ]
           Goal = [ FactIs(complete, true) ]
           Activities =
-            [ action "direct" [] None [ complete, true ] [] []
-              action "prepare" [] None [] [] [ token, 1L ]
-              action "cheap-isolated" [] None [ complete, true ] [ token, 1L ] [] ]
+            [ activity "direct" [] [] [] [ complete, true ]
+              activity "prepare" [] [] [ token, 1L ] []
+              activity "cheap-isolated" [] [ token, 1L ] [] [ complete, true ] ]
           DurationEstimatesMs = Map.ofList [ ActivityId "direct", directCost; ActivityId "prepare", 10L; ActivityId "cheap-isolated", 1L ] }
     let knowledge = { Location = home; Facts = Map.ofList [ complete, false ]; Resources = Map.ofList [ token, 0L ] }
     let successors (hasToken, doneAlready) =
@@ -127,9 +121,9 @@ let ``changing travel costs reverses the optimal collection order`` aToB bToA fi
           Goal = [ AtLocation(location 0); FactIs(a, true); FactIs(b, true) ]
           Activities =
             [ for name, source, target, _ in travel do
-                  action name [ AtLocation(location source) ] (Some(location target)) [] [] []
-              action "pick-a" [ AtLocation(location 1); FactIs(a, false) ] None [ a, true ] [] []
-              action "pick-b" [ AtLocation(location 2); FactIs(b, false) ] None [ b, true ] [] [] ]
+                  { activity name [ AtLocation(location source) ] [] [] [] with Destination = Some(location target) }
+              activity "pick-a" [ AtLocation(location 1); FactIs(a, false) ] [] [] [ a, true ]
+              activity "pick-b" [ AtLocation(location 2); FactIs(b, false) ] [] [] [ b, true ] ]
           DurationEstimatesMs =
             [ for name, _, _, cost in travel do ActivityId name, cost
               ActivityId "pick-a", 1L; ActivityId "pick-b", 1L ] |> Map.ofList }
@@ -147,11 +141,11 @@ let ``repeated resource trips replay for both proven and best-found routes`` bud
     let carried, delivered = ResourceId "carried", ResourceId "delivered"
     let complete = FactId "complete"
     let activities =
-        [ action "out" [ AtLocation home ] (Some source) [] [] []
-          action "back" [ AtLocation source ] (Some home) [] [] []
-          action "take" [ AtLocation source ] None [] [] [ carried, 1L ]
-          action "deliver" [ AtLocation home ] None [] [ carried, 1L ] [ delivered, 1L ]
-          action "finish" [ AtLocation home; ResourceAtLeast(delivered, 2L) ] None [ complete, true ] [] [] ]
+        [ { activity "out" [ AtLocation home ] [] [] [] with Destination = Some source }
+          { activity "back" [ AtLocation source ] [] [] [] with Destination = Some home }
+          activity "take" [ AtLocation source ] [] [ carried, 1L ] []
+          activity "deliver" [ AtLocation home ] [ carried, 1L ] [ delivered, 1L ] []
+          activity "finish" [ AtLocation home; ResourceAtLeast(delivered, 2L) ] [] [] [ complete, true ] ]
     let world =
         { Locations = Set.ofList [ home; source ]
           Facts = Set.singleton complete

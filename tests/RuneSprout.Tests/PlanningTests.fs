@@ -1,20 +1,13 @@
 module RuneSprout.Tests.PlanningTests
 
 open RuneSprout.Planner
+open RuneSprout.Tests.SyntheticFixtures
 open Xunit
 
 // All records in this file are synthetic test worlds, never accepted OSRS knowledge.
 let private home = LocationId "home"
 let private complete = FactId "complete"
 let private token = ResourceId "token"
-
-let private activity id requirements consumes produces changes =
-    { Id = ActivityId id
-      Requirements = requirements
-      Consumes = Map.ofList consumes
-      Produces = Map.ofList produces
-      Destination = None
-      FactChanges = Map.ofList changes }
 
 let private catalog activities costs =
     { Locations = Set.singleton home
