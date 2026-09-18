@@ -1,6 +1,6 @@
-# RuneScape Progression: v0 specification
+# RuneSprout: v0 specification
 
-The user approved this product specification through the design interview. RuneScape Progression is a working name. This document does not authorize implementation.
+The user approved this product specification through the design interview, then selected RuneSprout as the product name during first-increment planning. This document does not authorize implementation.
 
 ## Purpose
 

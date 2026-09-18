@@ -1,4 +1,4 @@
-# RuneScape progression exploration
+# RuneSprout product exploration
 
 This document records the design interview. The user accepted the recommendations through question 33. The consolidated [v0 specification](spec.md) records the agreed product scope, and the [glossary](../CONTEXT.md) contains resolved domain terms only. Product agreement does not authorize implementation.
 
@@ -38,7 +38,7 @@ The user's pickpocketing example illustrates task size and progress counts. It d
 
 ## Product identification
 
-This specification concerns Old School RuneScape. The initial “Runlight” reference is interpreted as RuneLite for the deferred plugin. RuneScape Progression remains a working project label, not a selected public name.
+This specification concerns Old School RuneScape. The initial “Runlight” reference is interpreted as RuneLite for the deferred plugin. RuneScape Progression was the working project label during this interview. The user later selected RuneSprout and confirmed `runesprout.app` as its future web address during [first-increment planning](first-increment.md).
 
 ## Design tree
 

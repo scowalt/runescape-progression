@@ -1,6 +1,6 @@
-# RuneScape Progression
+# RuneSprout
 
-An Old School RuneScape planner that turns a selected goal into small, countable tasks. It seeks the fastest modeled route from the player's known state. A website and RuneLite plugin are long-term parts of the project.
+An Old School RuneScape planner that turns a selected goal into small, countable tasks. It seeks the fastest modeled route from the player's known state. A website and RuneLite plugin are long-term parts of the project. The future web address is `runesprout.app`.
 
 This private repository contains the approved v0 specification and supporting research. There is no application implementation yet. The first artifact is a standalone planner for a members ironman account, verified with Cook's Assistant and controlled planning scenarios.
 
@@ -13,7 +13,7 @@ This private repository contains the approved v0 specification and supporting re
 - Read the [design interview](docs/design-notes.md) for decisions and deferred work.
 - Read the [quest research](docs/research/cooks-assistant.md) and [wiki ingestion research](docs/research/wiki-ingestion.md) for source evidence and limits.
 
-Implementation planning is the next phase. Do not treat the long-term website, plugin, or wiki importer as requirements for v0.
+The [first-increment plan](docs/first-increment.md) records the agreed scope and design, with concrete engineering defaults for final review. The first milestone turns an account snapshot into a costed, ordered Cook's Assistant plan. Do not treat the long-term website, plugin, or wiki importer as requirements for v0.
 
 ## Local setup
 

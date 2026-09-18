@@ -1,6 +1,6 @@
 # Coding-agent handoff
 
-This is a private, planning-only repository for RuneScape Progression. The product interview is complete for v0. Repository setup did not implement the planner or select its storage, search algorithm, or operator interface.
+This is a private, planning-only repository for RuneSprout. The product interview is complete for v0. Repository setup did not implement the planner or select its storage, search algorithm, or operator interface.
 
 ## Read before work
 
@@ -10,7 +10,7 @@ This is a private, planning-only repository for RuneScape Progression. The produ
 4. Read [docs/design-notes.md](docs/design-notes.md) when a decision needs context.
 5. Read the relevant files in `docs/research/` before relying on quest mechanics or planning wiki ingestion.
 
-The next phase is model design and implementation planning for the standalone planner. Follow the user's next request rather than restarting the product interview. Do not expand v0 into a website, RuneLite plugin, or comprehensive scraper.
+The standalone planner's agreed increment scope and design are recorded in [docs/first-increment.md](docs/first-increment.md), with engineering defaults for final review. Read that plan before further design or implementation. Catalog scope approval does not approve individual game records. Follow the user's next request rather than restarting the product interview. Do not expand v0 into a website, RuneLite plugin, or comprehensive scraper.
 
 ## Preserve these distinctions
 

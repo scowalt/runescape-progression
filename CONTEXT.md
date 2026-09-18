@@ -1,4 +1,4 @@
-# RuneScape Progression
+# RuneSprout
 
 Players work efficiently toward chosen in-game outcomes through small, countable tasks. The purpose is to make progress toward distant outcomes visible and satisfying from moment to moment.
 
