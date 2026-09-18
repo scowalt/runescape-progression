@@ -1,6 +1,6 @@
 # Coding-agent handoff
 
-This is a private, planning-only repository for RuneSprout. The product interview is complete for v0. Repository setup did not implement the planner or select its storage, search algorithm, or operator interface.
+This is a private repository for RuneSprout. The product interview is complete for v0. The executable scaffold provides CLI help, a library with no planning behavior, and process-level tests. Read [README.md](README.md) for setup and verification commands; implement application behavior only within the requested ticket's scope.
 
 ## Read before work
 

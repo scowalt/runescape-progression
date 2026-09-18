@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RuneSprout.Cli/RuneSprout.Cli.fsproj" />
+    <Project Path="src/RuneSprout.Planner/RuneSprout.Planner.fsproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RuneSprout.Tests/RuneSprout.Tests.fsproj" />
+  </Folder>
+</Solution>

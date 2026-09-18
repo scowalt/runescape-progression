@@ -4,3 +4,6 @@
 .mise.local.toml
 .DS_Store
 *.log
+**/bin/
+**/obj/
+TestResults/

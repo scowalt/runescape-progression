@@ -1,7 +1,27 @@
 [tools]
+"asdf:mise-plugins/mise-dotnet-core" = "10.0.401"
 gitleaks = "8.30.1"
 lefthook = "2.1.12"
 
 [tasks.setup]
 description = "Install the Git hooks"
 run = "lefthook install"
+
+[tasks.restore]
+description = "Restore the solution using checked-in NuGet locks"
+run = "dotnet restore RuneSprout.slnx --locked-mode"
+
+[tasks.build]
+description = "Restore and build the solution (including F# typechecking)"
+depends = ["restore"]
+run = "dotnet build RuneSprout.slnx --configuration Release --no-restore"
+
+[tasks.test]
+description = "Build and run the full test suite"
+depends = ["build"]
+run = "dotnet test RuneSprout.slnx --configuration Release --no-build --no-restore"
+
+[tasks.help]
+description = "Build and show CLI help (planning is not implemented yet)"
+depends = ["build"]
+run = "dotnet run --project src/RuneSprout.Cli --configuration Release --no-build --no-restore -- --help"

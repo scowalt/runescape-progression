@@ -2,7 +2,7 @@
 
 An Old School RuneScape planner that turns a selected goal into small, countable tasks. It seeks the fastest modeled route from the player's known state. A website and RuneLite plugin are long-term parts of the project. The future web address is `runesprout.app`.
 
-This private repository contains the approved v0 specification and supporting research. There is no application implementation yet. The first artifact is a standalone planner for a members ironman account, verified with Cook's Assistant and controlled planning scenarios.
+This private repository contains the approved v0 specification, supporting research, and an executable F# starting point: a CLI with help, a planner library with no domain behavior yet, and process-level xUnit tests. Route planning and game catalogs come in later tickets. The first planning milestone targets a members ironman account, verified with Cook's Assistant and controlled scenarios.
 
 ## Start here
 
@@ -17,12 +17,36 @@ The [first-increment plan](docs/first-increment.md) records the agreed scope and
 
 ## Local setup
 
-Only development guardrails are configured. Gitleaks scans staged changes for secrets through a Lefthook pre-commit hook. Both tools have exact versions in `.mise.toml`.
+Install [mise](https://mise.jdx.dev/getting-started.html), then run from the repository root:
 
 ```sh
 mise trust
 mise install
 mise run setup
+mise run restore
+mise run build
+mise run test
+mise run help
 ```
 
-No development server or application test command exists yet. The acceptance scenarios describe required behavior, not tests that already pass.
+`build` includes locked restore and F# typechecking; `test` and `help` build first. The tests launch the built CLI in a separate process, checking help and rejection of unsupported commands. No development server is needed.
+
+To invoke help directly:
+
+```sh
+mise exec -- dotnet run --project src/RuneSprout.Cli -- --help
+```
+
+Only `--help` is supported: it exits 0 and explicitly states that planning is not implemented yet. Other arguments (including `plan`, or no arguments) exit 2 with usage guidance on stderr. There is no planning sample task yet. The domain acceptance scenarios remain requirements, not passing planner tests.
+
+## Projects and reproducibility
+
+- `src/RuneSprout.Planner/`: library reserved for pure domain logic; no I/O or placeholder planning behavior.
+- `src/RuneSprout.Cli/`: executable adapter, referencing the library.
+- `tests/RuneSprout.Tests/`: xUnit process tests, referencing the CLI so its executable and runtime files are built and copied for testing.
+
+.NET SDK `10.0.401` is pinned in `.mise.toml` and `global.json`, with SDK roll-forward disabled. It was selected from Microsoft's [.NET 10 release metadata](https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json) (2026-09-08 servicing release; active LTS). The explicit mise backend avoids ambiguity with machine-local `dotnet` aliases. Change both SDK pins together when updating.
+
+Direct test dependencies have exact versions; each project's checked-in `packages.lock.json` also locks transitive packages and the SDK-provided FSharp.Core. Restore is locked by default, and `NuGet.Config` selects nuget.org rather than machine-specific feeds. To intentionally update dependencies, edit the versions, run `mise exec -- dotnet restore RuneSprout.slnx -p:RestoreLockedMode=false --force-evaluate`, review all lock changes, and rerun the checks.
+
+Gitleaks scans staged changes through the existing Lefthook pre-commit hook; `mise run setup` installs it. Keep scanning enabled. GitHub Actions runs the same locked restore/build/test task and a full-history secret scan on pushes and pull requests, with read-only repository permissions and no deployment.
