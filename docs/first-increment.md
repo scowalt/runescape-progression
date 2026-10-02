@@ -2,7 +2,7 @@
 
 Status: the user accepted decisions Q1–Q9. This document consolidates those decisions and proposes concrete engineering defaults for final review. No application implementation is authorized by this document.
 
-The [v0 specification](spec.md) remains the product contract. This increment delivers part of v0 rather than replacing it. The [glossary](../CONTEXT.md) defines the domain language.
+The [v0 specification](spec.md) remains the product contract. This increment delivers part of v0 rather than replacing it. The [glossary](../GLOSSARY.md) defines the domain language.
 
 ## Agreed decisions
 

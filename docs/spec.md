@@ -23,7 +23,7 @@ The first version does not require a website, plugin, live game connection, or c
 
 ## Model ownership
 
-The [glossary](../CONTEXT.md) defines the domain language. The project owns its game model rather than adopting wiki page structure as its model.
+The [glossary](../GLOSSARY.md) defines the domain language. The project owns its game model rather than adopting wiki page structure as its model.
 
 The game model describes activities, requirements, resource inputs, and effects. The knowledge catalog contains accepted descriptions expressed through that model. It remains separate from account knowledge, the personal plan, and work history.
 

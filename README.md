@@ -7,7 +7,7 @@ This private repository contains the approved v0 specification, supporting resea
 ## Start here
 
 - Read [AGENTS.md](AGENTS.md) for the next coding-agent session.
-- Read [CONTEXT.md](CONTEXT.md) for the domain glossary.
+- Read [GLOSSARY.md](GLOSSARY.md) for the domain glossary.
 - Read the [approved specification](docs/spec.md) for scope and behavior.
 - Read the [acceptance scenarios](docs/domain/scenarios.md) for verification requirements.
 - Read the [design interview](docs/design-notes.md) for decisions and deferred work.

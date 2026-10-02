@@ -1,6 +1,6 @@
 # RuneSprout product exploration
 
-This document records the design interview. The user accepted the recommendations through question 33. The consolidated [v0 specification](spec.md) records the agreed product scope, and the [glossary](../CONTEXT.md) contains resolved domain terms only. Product agreement does not authorize implementation.
+This document records the design interview. The user accepted the recommendations through question 33. The consolidated [v0 specification](spec.md) records the agreed product scope, and the [glossary](../GLOSSARY.md) contains resolved domain terms only. Product agreement does not authorize implementation.
 
 ## Confirmed direction
 
