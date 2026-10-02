@@ -4,7 +4,7 @@ This is a private repository for RuneSprout. The product interview is complete f
 
 ## Read before work
 
-1. Read [CONTEXT.md](CONTEXT.md) for the agreed domain language.
+1. Read [GLOSSARY.md](GLOSSARY.md) for the agreed domain language.
 2. Read [docs/spec.md](docs/spec.md) for the approved product specification.
 3. Read [docs/domain/scenarios.md](docs/domain/scenarios.md) for the acceptance scenarios.
 4. Read [docs/design-notes.md](docs/design-notes.md) when a decision needs context.
@@ -20,7 +20,7 @@ The standalone planner's agreed increment scope and design are recorded in [docs
 - Keep operator-approved knowledge distinct from agent proposals.
 - Keep sourced mechanics distinct from timing estimates.
 
-Use Mission Control's F# domain-design defaults when implementation begins: pure domain logic, explicit dependencies and state, discriminated unions, and `Result`. Apply Domain-Driven Design proportionally. Keep implementation details outside `CONTEXT.md`, and avoid choosing web infrastructure for the standalone proof.
+Use Mission Control's F# domain-design defaults when implementation begins: pure domain logic, explicit dependencies and state, discriminated unions, and `Result`. Apply Domain-Driven Design proportionally. Keep implementation details outside `GLOSSARY.md`, and avoid choosing web infrastructure for the standalone proof.
 
 ## Repository practices
 
