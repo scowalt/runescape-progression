@@ -1,6 +1,5 @@
 namespace RuneSprout.Planner
 
-// These types describe a finite deterministic model, not approval of game knowledge.
 type LocationId = LocationId of string
 type FactId = FactId of string
 type ResourceId = ResourceId of string
@@ -27,11 +26,9 @@ type Activity =
 type PlanningCatalog =
     { Locations: Set<LocationId>
       Facts: Set<FactId>
-      // Explicit world/storage limits. These are feasibility rules, not search caps.
       ResourceCapacities: Map<ResourceId, int64>
       Goal: Requirement list
       Activities: Activity list
-      // Supplied estimates are separate from activity mechanics; not measured timings.
       DurationEstimatesMs: Map<ActivityId, int64> }
 
 type SearchBudget = { MaxExpandedStates: int }

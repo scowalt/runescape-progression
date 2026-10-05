@@ -52,7 +52,6 @@ module internal Validation =
               | None -> ()
           if not (Set.contains knowledge.Location catalog.Locations) then
               InvalidAccountKnowledge "Starting location must be a declared location."
-          // This slice requires exact knowledge. Missing fields are not silently zero/false.
           if keys knowledge.Facts <> catalog.Facts then
               InvalidAccountKnowledge "Explicit values are required for exactly the declared facts; partial knowledge is not supported yet."
           if keys knowledge.Resources <> resources then

@@ -4,9 +4,6 @@ open RuneSprout.Planner
 open RuneSprout.Tests.SyntheticFixtures
 open Xunit
 
-// Independent oracle: enumerate ALL simple paths, not another shortest-path solver.
-// Nonnegative costs guarantee that removing a repeated-state cycle cannot hurt.
-// Big integers avoid sharing the planner's cost representation or overflow logic.
 let private enumerateMinimum initial goal (successors: 'state -> (string * int64 * 'state) list) =
     let rec paths visited state total =
         seq {
@@ -51,7 +48,6 @@ let private assertOptimum world knowledge initial goal successors =
 let ``all 4096 three-location worlds match independent path enumeration`` () =
     let location n = LocationId(string n)
     let pairs = [ for source in 0..2 do for target in 0..2 do if source <> target then source, target ]
-    // Each of the six directed edges is absent or costs 0, 1, or 2 ms: 4^6 worlds.
     for encoding in 0..4095 do
         let edges =
             pairs
@@ -108,7 +104,6 @@ let ``changing travel costs reverses the optimal collection order`` aToB bToA fi
         [ "home-a", 0, 1, 2L; "a-home", 1, 0, 2L
           "home-b", 0, 2, 1L; "b-home", 2, 0, 1L
           "a-b", 1, 2, aToB; "b-a", 2, 1, bToA ]
-    // Oracle uses a (position, collection bitmask), independent of planner records.
     let successors (position, collected) =
         [ for name, source, target, cost in travel do
               if position = source then yield name, cost, (target, collected)
@@ -156,7 +151,6 @@ let ``repeated resource trips replay for both proven and best-found routes`` bud
             [ "out", 1L; "back", 1L; "take", 2L; "deliver", 1L; "finish", 10L ]
             |> List.map (fun (name, cost) -> ActivityId name, cost) |> Map.ofList }
     let knowledge = { Location = home; Facts = Map.ofList [ complete, false ]; Resources = Map.ofList [ carried, 0L; delivered, 0L ] }
-    // The oracle directly describes the test world's physical rules; no planner transition calls.
     let successors (atHome, hasItem, deliveries, doneAlready) =
         [ if not doneAlready then
               if atHome then
