@@ -4,7 +4,6 @@ open RuneSprout.Planner
 open RuneSprout.Tests.SyntheticFixtures
 open Xunit
 
-// All records in this file are synthetic test worlds, never accepted OSRS knowledge.
 let private home = LocationId "home"
 let private complete = FactId "complete"
 let private token = ResourceId "token"
@@ -189,7 +188,6 @@ let ``future benefits are not appended after goal completion`` () =
             [ activity "finish" [] [] [] [ complete, true ]
               activity "future-benefit" [ FactIs(complete, true) ] [] [ token, 1L ] [] ]
             [ ActivityId "finish", System.Int64.MaxValue; ActivityId "future-benefit", 1L ]
-    // Expanding the goal would overflow. The optimization horizon must end first.
     let plan, report = Planning.plan world start SearchBudget.defaultBudget |> proven
     Assert.Equal<ActivityId list>([ ActivityId "finish" ], stepIds plan)
     Assert.Equal(0L, plan.FinalKnowledge.Resources[token])

@@ -24,7 +24,6 @@ module Planning =
                         None
                     else
                         let remaining = Checked.(-) count consumed
-                        // Test capacity before adding: a full store is infeasible, not truncated.
                         if produced > Checked.(-) catalog.ResourceCapacities[resource] remaining then
                             None
                         else
@@ -114,8 +113,6 @@ module Planning =
             |> Option.defaultValue (NoCompleteModeledRouteFound { ExpandedStates = expanded; StoppingReason = FrontierExhausted })
             |> Ok
 
-    // A complete route never leaves the public interface without replaying from
-    // the supplied knowledge. Search bookkeeping alone is not feasibility evidence.
     let private verifyPlan catalog knowledge (plan: PersonalPlan) =
         let activities = catalog.Activities |> List.map (fun activity -> activity.Id, activity) |> Map.ofList
         let invalid message = Error(ReplayVerificationFailed message)
