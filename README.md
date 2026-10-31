@@ -2,7 +2,7 @@
 
 An Old School RuneScape planner that turns a selected goal into small, countable tasks. It seeks the fastest modeled route from the player's known state. A website and RuneLite plugin are long-term parts of the project. The future web address is `runesprout.app`.
 
-This private repository contains the approved v0 specification, supporting research, a pure F# shortest-route planner verified in synthetic worlds, a help-only CLI, and xUnit tests. Game catalogs and CLI planning come in later tickets. The first application milestone targets a members ironman account, verified with Cook's Assistant and controlled scenarios.
+This public-source repository contains the approved v0 specification, supporting research, a pure F# shortest-route planner verified in synthetic worlds, a help-only CLI, and xUnit tests. Game catalogs and CLI planning come in later tickets. The first application milestone targets a members ironman account, verified with Cook's Assistant and controlled scenarios.
 
 ## Start here
 
@@ -49,6 +49,6 @@ Only `--help` is supported: it exits 0 and explicitly states that planning is no
 
 Direct test dependencies have exact versions; each project's checked-in `packages.lock.json` also locks transitive packages and the SDK-provided FSharp.Core. Restore is locked by default, and `NuGet.Config` selects nuget.org rather than machine-specific feeds. To intentionally update dependencies, edit the versions, run `mise exec -- dotnet restore RuneSprout.slnx -p:RestoreLockedMode=false --force-evaluate`, review all lock changes, and rerun the checks.
 
-Gitleaks scans staged changes through the existing Lefthook pre-commit hook; `mise run setup` installs it. Keep scanning enabled. Woodpecker runs the same locked restore/build/test commands and comment-policy checks on pushes, tags, and pull requests, using pinned containers without deployment credentials. Pull requests are tested with their target branch merged in the isolated checkout.
+Gitleaks scans staged changes through the existing Lefthook pre-commit hook; `mise run setup` installs it. Keep scanning enabled. GitHub Actions is the owner-selected hosted CI provider for public source: retain locked restore/build/test, comment-policy checks and the full-history secret scan that fetches all branch/tag refs. CI has no deployment or live account credentials.
 
-GitHub Actions remains enabled during this transition. Its full-history secret scan fetches all branch/tag refs; the standard Woodpecker clone plugin's full-depth fetch covers the selected ref and PR target, not every remote branch. That scan has not been weakened or claimed migrated. Existing Actions checks remain until equivalent all-ref scanning is available.
+Keep the former Woodpecker webhook disabled for the public repository so untrusted public contributions cannot reach private runners. The checked-in Woodpecker definitions remain historical reference, not the active CI contract. Do not provision a private checkout key or retire Actions for the superseded private-CI migration. Live account data and credentials stay private; publishing this source does not approve wiki ingestion, redistribution of future datasets, or a new code license.

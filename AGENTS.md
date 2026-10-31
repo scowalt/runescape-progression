@@ -1,6 +1,6 @@
 # Coding-agent handoff
 
-This is a private repository for RuneSprout. The product interview is complete for v0. The executable scaffold provides CLI help, a library with no planning behavior, and process-level tests. Read [README.md](README.md) for setup and verification commands; implement application behavior only within the requested ticket's scope.
+This is a public-source repository for RuneSprout. The product interview is complete for v0. The executable scaffold provides CLI help, a library with no planning behavior, and process-level tests. Read [README.md](README.md) for setup and verification commands; implement application behavior only within the requested ticket's scope.
 
 ## Read before work
 
@@ -26,6 +26,6 @@ Use Mission Control's F# domain-design defaults when implementation begins: pure
 
 Use mise for pinned tools. Run `mise install` and `mise run setup` to install the pre-commit hook. Do not bypass secret scanning.
 
-Use `gh` for GitHub operations. Keep this repository private. Do not add secrets or live account credentials to fixtures.
+Use `gh` for GitHub operations. Keep secrets, live account credentials and personal account snapshots out of published source, fixtures and history. Use GitHub Actions for hosted CI; public pull requests must not receive private runner access or production credentials.
 
 Broad wiki ingestion and automated knowledge acceptance are deferred. Read `docs/research/wiki-ingestion.md` before that work, including unresolved access and reuse obligations. Do not let a planning failure silently trigger scraping or acceptance of invented mechanics.
