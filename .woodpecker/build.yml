@@ -1,0 +1,31 @@
+when:
+  - event: [push, pull_request, tag]
+
+labels:
+  ci_os: linux
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git:2.11.0@sha256:9802cb7852dcf31f9c5c1d1ddeadfb9002d4fae85751f7b6a792eedb267bcc59
+    settings:
+      depth: 0
+      partial: false
+      recursive: false
+      lfs: false
+      merge-pull-request: true
+      git-user-name: Woodpecker CI
+      git-user-email: ci@woodpecker.local
+
+steps:
+  - name: locked-restore-build-test
+    image: mcr.microsoft.com/dotnet/sdk:10.0.401-noble@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317
+    environment:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    commands:
+      - >-
+        timeout --kill-after=15s 15m sh -ec '
+        test "$(dotnet --version)" = "10.0.401";
+        dotnet restore RuneSprout.slnx --locked-mode;
+        dotnet build RuneSprout.slnx --configuration Release --no-restore;
+        dotnet test RuneSprout.slnx --configuration Release --no-build --no-restore'
