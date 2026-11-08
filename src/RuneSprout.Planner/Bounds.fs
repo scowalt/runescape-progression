@@ -31,12 +31,15 @@ module internal Bounds =
             | OccupiesSpace space ->
                 limit catalog resource - lower knowledge.Resources[space] - occupied catalog knowledge space + bigint count
 
-    let consistent catalog knowledge =
-        catalog.ResourceLimits
-        |> Map.forall (fun resource limit ->
-            match limit with
-            | OccupiesSpace _ -> true
-            | Capacity capacity -> lower knowledge.Resources[resource] + occupied catalog knowledge resource <= bigint capacity)
+    let lowers knowledge = knowledge.Resources |> Map.map (fun _ quantity -> lower quantity)
+
+    let overfull catalog (counts: Map<ResourceId, bigint>) =
+        [ for KeyValue(resource, limit) in catalog.ResourceLimits do
+              match limit with
+              | Capacity capacity when counts[resource] + List.sumBy (fun id -> counts[id]) (occupants catalog resource) > bigint capacity -> resource
+              | _ -> () ]
+
+    let consistent catalog knowledge = List.isEmpty (overfull catalog (lowers knowledge))
 
     let unknowns knowledge =
         [ if knowledge.Location = Unknown then CurrentLocation

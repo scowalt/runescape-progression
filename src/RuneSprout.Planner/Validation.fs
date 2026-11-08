@@ -113,7 +113,14 @@ module internal Validation =
 
     let inputs catalog (snapshot: AccountSnapshot) budget =
         match structure catalog snapshot budget with
-        | [] when not (Bounds.consistent catalog snapshot.Knowledge) ->
-            Error [ InvalidAccountKnowledge "Known counts and lower bounds exceed their modeled capacity or space." ]
-        | [] -> snapshot.Assumptions |> List.fold (fun knowledge assumption -> Result.bind (fun current -> assume catalog current assumption) knowledge) (Ok snapshot.Knowledge)
+        | [] ->
+            match Bounds.overfull catalog (Bounds.lowers snapshot.Knowledge) with
+            | [] -> snapshot.Assumptions |> List.fold (fun knowledge assumption -> Result.bind (fun current -> assume catalog current assumption) knowledge) (Ok snapshot.Knowledge)
+            | resources ->
+                Error
+                    [ for resource in resources ->
+                          InvalidAccountKnowledge(
+                              match Bounds.occupants catalog resource with
+                              | [] -> sprintf "Count for %A exceeds its modeled capacity." resource
+                              | _ -> sprintf "Counts for %A and the resources occupying it exceed its modeled capacity." resource) ]
         | errors -> Error errors

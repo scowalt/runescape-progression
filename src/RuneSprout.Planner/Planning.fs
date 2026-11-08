@@ -3,38 +3,42 @@ namespace RuneSprout.Planner
 open System.Collections.Generic
 
 module Planning =
+    type private Span = { Low: bigint; High: bigint }
+
     type private Belief =
         { Current: AccountKnowledge
-          Start: AccountKnowledge
+          Start: Map<ResourceId, Span>
           Relied: Set<AccountFact> }
 
-    let private believe knowledge = { Current = knowledge; Start = knowledge; Relied = Set.empty }
+    let private believe catalog knowledge =
+        { Current = knowledge
+          Start = knowledge.Resources |> Map.map (fun resource quantity -> { Low = Bounds.lower quantity; High = Bounds.upper catalog knowledge resource })
+          Relied = Set.empty }
 
-    let private atLeast catalog optimistic belief resource count =
-        let raise knowledge bound = { knowledge with Resources = Map.add resource (AtLeast(int64 bound)) knowledge.Resources }
-        let limit = Bounds.limit catalog resource
-        match belief.Current.Resources[resource], belief.Start.Resources[resource] with
-        | quantity, _ when Bounds.lower quantity >= count -> Some belief
-        | AtLeast current, AtLeast start when Set.contains (ResourceQuantity resource) optimistic ->
-            let start = bigint start + count - bigint current
-            if count > limit || start > limit then
-                None
-            else
-                Some
-                    { Current = raise belief.Current count
-                      Start = raise belief.Start start
-                      Relied = Set.add (ResourceQuantity resource) belief.Relied }
+    let private feasible catalog (start: Map<ResourceId, Span>) =
+        start |> Map.forall (fun _ span -> span.Low <= span.High)
+        && List.isEmpty (Bounds.overfull catalog (start |> Map.map (fun _ span -> span.Low)))
+
+    let private atLeast optimistic belief resource count =
+        match belief.Current.Resources[resource] with
+        | quantity when Bounds.lower quantity >= count -> Some belief
+        | AtLeast current when Set.contains (ResourceQuantity resource) optimistic ->
+            let span = belief.Start[resource]
+            Some
+                { Current = { belief.Current with Resources = Map.add resource (AtLeast(int64 count)) belief.Current.Resources }
+                  Start = Map.add resource { span with Low = span.Low + count - bigint current } belief.Start
+                  Relied = Set.add (ResourceQuantity resource) belief.Relied }
         | _ -> None
 
     let private settle optimistic belief fact known value implied refine =
         match known with
         | Known current when current = value -> Some belief
-        | Unknown when implied -> Some { belief with Current = refine belief.Current; Start = refine belief.Start }
+        | Unknown when implied -> Some { belief with Current = refine belief.Current }
         | Unknown when Set.contains fact optimistic ->
             Some
-                { Current = refine belief.Current
-                  Start = refine belief.Start
-                  Relied = Set.add fact belief.Relied }
+                { belief with
+                    Current = refine belief.Current
+                    Relied = Set.add fact belief.Relied }
         | _ -> None
 
     let private assume catalog optimistic belief = function
@@ -44,18 +48,14 @@ module Planning =
         | FactIs(fact, value) ->
             settle optimistic belief (FactValue fact) belief.Current.Facts[fact] value false (fun knowledge ->
                 { knowledge with Facts = Map.add fact (Known value) knowledge.Facts })
-        | ResourceAtLeast(resource, count) -> atLeast catalog optimistic belief resource (bigint count)
+        | ResourceAtLeast(resource, count) -> atLeast optimistic belief resource (bigint count)
 
     let private satisfy catalog optimistic belief conditions =
         conditions
         |> List.fold (fun result condition -> Option.bind (fun current -> assume catalog optimistic current condition) result) (Some belief)
-        |> Option.filter (fun belief -> Bounds.consistent catalog belief.Current && Bounds.consistent catalog belief.Start)
+        |> Option.filter (fun belief -> feasible catalog belief.Start)
 
     let private goal catalog optimistic belief = satisfy catalog optimistic belief catalog.Goal
-
-    let private ceiling catalog belief resource =
-        let spent = Bounds.lower belief.Start.Resources[resource] - Bounds.lower belief.Current.Resources[resource]
-        min (Bounds.upper catalog belief.Current resource) (Bounds.upper catalog belief.Start resource - spent)
 
     let private effects catalog (activity: Activity) resource =
         let amount id (source: Map<ResourceId, int64>) = Map.tryFind id source |> Option.map bigint |> Option.defaultValue 0I
@@ -72,7 +72,7 @@ module Planning =
             |> Map.fold
                 (fun result resource (consumed, _) ->
                     if consumed = 0I then result
-                    else Option.bind (fun current -> atLeast catalog optimistic current resource consumed) result)
+                    else Option.bind (fun current -> atLeast optimistic current resource consumed) result)
                 (satisfy catalog optimistic belief activity.Requirements)
 
         withInputs
@@ -81,29 +81,27 @@ module Planning =
             let after resource =
                 let consumed, produced = changes[resource]
                 Bounds.lower state.Resources[resource] - consumed + produced
-            let unbounded resource =
-                let consumed, produced = changes[resource]
+            let fitting resource span =
                 match catalog.ResourceLimits[resource], Bounds.occupants catalog resource with
-                | Capacity _, [] -> ceiling catalog belief resource - consumed + produced > Bounds.limit catalog resource
-                | _ -> false
-            let overflows = state.Resources |> Map.filter (fun resource _ -> unbounded resource) |> Map.keys |> Seq.map ResourceQuantity |> Set.ofSeq
-            let fits = state.Resources |> Map.forall (fun resource _ -> after resource <= Bounds.limit catalog resource)
-            if not fits || not (Set.isSubset overflows optimistic) then
+                | Capacity capacity, [] -> { span with High = min span.High (bigint capacity - after resource + span.Low) }
+                | _ -> span
+            let start = belief.Start |> Map.map fitting
+            let overflows = start |> Map.filter (fun resource span -> span <> belief.Start[resource]) |> Map.keys |> Seq.map ResourceQuantity |> Set.ofSeq
+            if not (Set.isSubset overflows optimistic && feasible catalog start) then
                 None
             else
-                let next =
-                    { Location = activity.Destination |> Option.map Known |> Option.defaultValue state.Location
-                      Facts = Map.fold (fun facts key value -> Map.add key (Known value) facts) state.Facts activity.FactChanges
-                      Resources =
-                        state.Resources
-                        |> Map.map (fun resource quantity ->
-                            match quantity with
-                            | Exactly _ -> Exactly(int64 (after resource))
-                            | AtLeast _ -> AtLeast(int64 (after resource))) }
-                if Bounds.consistent catalog next then
-                    Some { belief with Current = next; Relied = Set.union belief.Relied overflows }
-                else
-                    None)
+                Some
+                    { Current =
+                        { Location = activity.Destination |> Option.map Known |> Option.defaultValue state.Location
+                          Facts = Map.fold (fun facts key value -> Map.add key (Known value) facts) state.Facts activity.FactChanges
+                          Resources =
+                            state.Resources
+                            |> Map.map (fun resource quantity ->
+                                match quantity with
+                                | Exactly _ -> Exactly(int64 (after resource))
+                                | AtLeast _ -> AtLeast(int64 (after resource))) }
+                      Start = start
+                      Relied = Set.union belief.Relied overflows })
 
     type private Route =
         { Belief: Belief
@@ -130,7 +128,7 @@ module Planning =
             frontier.Enqueue(route, struct (route.Cost, sequence))
             sequence <- Checked.(+) sequence 1L
 
-        let start = believe knowledge
+        let start = believe catalog knowledge
         costs.Add(start, 0L)
         enqueue { Belief = start; Cost = 0L; ReversedSteps = [] }
         let mutable expanded = 0
@@ -252,7 +250,7 @@ module Planning =
                             | Some next -> addCost catalog cost activity.Id |> Result.map (fun total -> next, total))
 
         plan.Steps
-        |> List.fold replayStep (Ok(believe knowledge, 0L))
+        |> List.fold replayStep (Ok(believe catalog knowledge, 0L))
         |> Result.bind (fun (belief, cost) ->
             if not (complete belief) then invalid "Route does not complete the goal."
             elif belief.Current <> plan.FinalKnowledge then invalid "Replayed knowledge differs from the route result."
