@@ -26,9 +26,10 @@ module Planning =
                       Relied = Set.add (ResourceQuantity resource) belief.Relied }
         | _ -> None
 
-    let private settle optimistic belief fact known value refine =
+    let private settle optimistic belief fact known value implied refine =
         match known with
         | Known current when current = value -> Some belief
+        | Unknown when implied -> Some { belief with Current = refine belief.Current; Start = refine belief.Start }
         | Unknown when Set.contains fact optimistic ->
             Some
                 { Current = refine belief.Current
@@ -38,10 +39,10 @@ module Planning =
 
     let private assume catalog optimistic belief = function
         | AtLocation location ->
-            settle optimistic belief CurrentLocation belief.Current.Location location (fun knowledge ->
+            settle optimistic belief CurrentLocation belief.Current.Location location (catalog.Locations = Set.singleton location) (fun knowledge ->
                 { knowledge with Location = Known location })
         | FactIs(fact, value) ->
-            settle optimistic belief (FactValue fact) belief.Current.Facts[fact] value (fun knowledge ->
+            settle optimistic belief (FactValue fact) belief.Current.Facts[fact] value false (fun knowledge ->
                 { knowledge with Facts = Map.add fact (Known value) knowledge.Facts })
         | ResourceAtLeast(resource, count) -> atLeast catalog optimistic belief resource (bigint count)
 
@@ -51,6 +52,10 @@ module Planning =
         |> Option.filter (fun belief -> Bounds.consistent catalog belief.Current && Bounds.consistent catalog belief.Start)
 
     let private goal catalog optimistic belief = satisfy catalog optimistic belief catalog.Goal
+
+    let private ceiling catalog belief resource =
+        let spent = Bounds.lower belief.Start.Resources[resource] - Bounds.lower belief.Current.Resources[resource]
+        min (Bounds.upper catalog belief.Current resource) (Bounds.upper catalog belief.Start resource - spent)
 
     let private effects catalog (activity: Activity) resource =
         let amount id (source: Map<ResourceId, int64>) = Map.tryFind id source |> Option.map bigint |> Option.defaultValue 0I
@@ -79,7 +84,7 @@ module Planning =
             let unbounded resource =
                 let consumed, produced = changes[resource]
                 match catalog.ResourceLimits[resource], Bounds.occupants catalog resource with
-                | Capacity _, [] -> Bounds.upper catalog state resource - consumed + produced > Bounds.limit catalog resource
+                | Capacity _, [] -> ceiling catalog belief resource - consumed + produced > Bounds.limit catalog resource
                 | _ -> false
             let overflows = state.Resources |> Map.filter (fun resource _ -> unbounded resource) |> Map.keys |> Seq.map ResourceQuantity |> Set.ofSeq
             let fits = state.Resources |> Map.forall (fun resource _ -> after resource <= Bounds.limit catalog resource)
@@ -138,7 +143,7 @@ module Planning =
             if costs[route.Belief] = route.Cost then
                 match limit, goal catalog optimistic route.Belief with
                 | Some limit, _ when route.Cost >= limit -> ending <- Some Exhausted
-                | _, Some reached -> ending <- Some(Reached { route with Belief = reached })
+                | _, Some reached -> ending <- Some(Reached { route with Belief = { route.Belief with Relied = reached.Relied } })
                 | _ when expanded >= budget -> ending <- Some(OutOfBudget bestComplete)
                 | _ ->
                     expanded <- Checked.(+) expanded 1
@@ -228,12 +233,12 @@ module Planning =
 
     let private verifyPlan catalog knowledge (plan: PersonalPlan) =
         let activities = catalog.Activities |> List.map (fun activity -> activity.Id, activity) |> Map.ofList
-        let complete state = (goal catalog Set.empty (believe state)).IsSome
+        let complete belief = (goal catalog Set.empty belief).IsSome
         let invalid message = Error(ReplayVerificationFailed message)
         let replayStep result step =
             result
-            |> Result.bind (fun (state, cost) ->
-                if complete state then
+            |> Result.bind (fun (belief, cost) ->
+                if complete belief then
                     invalid "Route continues after goal completion."
                 else
                     match Map.tryFind step.ActivityId activities with
@@ -242,15 +247,15 @@ module Planning =
                         if step.EstimatedMilliseconds <> catalog.DurationEstimatesMs[activity.Id] then
                             invalid "Step duration differs from the supplied estimate."
                         else
-                            match transition catalog Set.empty (believe state) activity with
+                            match transition catalog Set.empty belief activity with
                             | None -> invalid "Route has a requirement, resource input, or space that is not guaranteed."
-                            | Some next -> addCost catalog cost activity.Id |> Result.map (fun total -> next.Current, total))
+                            | Some next -> addCost catalog cost activity.Id |> Result.map (fun total -> next, total))
 
         plan.Steps
-        |> List.fold replayStep (Ok(knowledge, 0L))
-        |> Result.bind (fun (state, cost) ->
-            if not (complete state) then invalid "Route does not complete the goal."
-            elif state <> plan.FinalKnowledge then invalid "Replayed knowledge differs from the route result."
+        |> List.fold replayStep (Ok(believe knowledge, 0L))
+        |> Result.bind (fun (belief, cost) ->
+            if not (complete belief) then invalid "Route does not complete the goal."
+            elif belief.Current <> plan.FinalKnowledge then invalid "Replayed knowledge differs from the route result."
             elif cost <> plan.TotalEstimatedMilliseconds then invalid "Replayed total differs from the route cost."
             else Ok())
 

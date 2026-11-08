@@ -26,7 +26,7 @@ Eligibility, quest acceptance and completion, individual delivery credit, and fa
 
 `AccountSnapshot.Assumptions` are applied in order on top of the knowledge. An assumption may settle an unknown or raise a lower bound. One that contradicts a known value, an earlier assumption, or a capacity returns `ContradictoryAssumption`. Every returned plan repeats the snapshot's assumptions.
 
-An activity is permitted only when its requirements, inputs, space, and capacity are guaranteed in every account the knowledge describes. Its effects keep the kind of each quantity: a pickup from `AtLeast 0` gives `AtLeast 1`, never `Exactly 1`, and unrelated unknowns stay unknown in the final knowledge.
+An activity is permitted only when its requirements, inputs, space, and capacity are guaranteed in every account the knowledge describes. A count's upper bound follows it through the route, so room freed by spending from an unknown count is guaranteed room, and an unknown location in a one-location world is that location. Effects keep the kind of each quantity: a pickup from `AtLeast 0` gives `AtLeast 1`, never `Exactly 1`, and unrelated unknowns stay unknown in the final knowledge.
 
 To decide what an unknown might change, the planner also searches a relaxed model where an unknown may resolve favorably. A relaxed route records what it assumed about the starting account: one location, one value per fact, and minimum counts that must fit their capacities. Every relaxed route is therefore possible in at least one account the knowledge describes. This narrow representation is not a complete OSRS account model.
 
@@ -41,7 +41,7 @@ An expansion is one evaluation of a non-goal state's outgoing activities, includ
 | `ProvenFastest` | `MinimumCostGoalSelected` | A guaranteed minimum-cost route, and no account the knowledge describes has a cheaper one: shortest-path certificate under the supplied finite model, knowledge, and estimates. |
 | `BestFound` with facts | `MinimumCostGoalSelected` | The cheapest guaranteed route. Some account the knowledge describes has a cheaper route that relies on the listed unknowns. |
 | `BestFound` without facts | `ExpansionBudgetExhausted` | The cheapest guaranteed route discovered so far, including goals not yet selected from the queue; no optimality certificate. |
-| `NeedsAccountInformation` | `FrontierExhausted` | No guaranteed route exists, some described account has one, and every such route relies on each listed fact. Other unknowns are not requested. |
+| `NeedsAccountInformation` | `FrontierExhausted`, or `ExpansionBudgetExhausted` if a later fact check ran out of budget | No guaranteed route exists, some described account has one, and every such route relies on each listed fact. Other unknowns are not requested. |
 | `NoCompleteModeledRouteFound` with facts | `FrontierExhausted` | No guaranteed route exists, and some described account has one, but no single unknown is required. Resolving the listed facts may help. |
 | `NoCompleteModeledRouteFound` without facts | `ExpansionBudgetExhausted` | Search stopped without a complete route; this is not evidence that none exists. |
 | `NoCompleteModeledRouteFound` without facts | `FrontierExhausted` | No account the knowledge describes has a route in the modeled states. This is not impossibility in the game. |
