@@ -12,22 +12,31 @@ module Planning =
 
     let private believe catalog knowledge =
         { Current = knowledge
-          Start = knowledge.Resources |> Map.map (fun resource quantity -> { Low = Bounds.lower quantity; High = Bounds.upper catalog knowledge resource })
+          Start =
+            knowledge.Resources
+            |> Map.map (fun resource quantity ->
+                match quantity with
+                | Exactly count -> { Low = bigint count; High = bigint count }
+                | AtLeast count -> { Low = bigint count; High = Bounds.limit catalog resource })
           Relied = Set.empty }
 
     let private feasible catalog (start: Map<ResourceId, Span>) =
         start |> Map.forall (fun _ span -> span.Low <= span.High)
         && List.isEmpty (Bounds.overfull catalog (start |> Map.map (fun _ span -> span.Low)))
 
-    let private atLeast optimistic belief resource count =
+    let private atLeast catalog optimistic belief resource count =
         match belief.Current.Resources[resource] with
         | quantity when Bounds.lower quantity >= count -> Some belief
         | AtLeast current when Set.contains (ResourceQuantity resource) optimistic ->
             let span = belief.Start[resource]
-            Some
-                { Current = { belief.Current with Resources = Map.add resource (AtLeast(int64 count)) belief.Current.Resources }
-                  Start = Map.add resource { span with Low = span.Low + count - bigint current } belief.Start
-                  Relied = Set.add (ResourceQuantity resource) belief.Relied }
+            let start = Map.add resource { span with Low = span.Low + count - bigint current } belief.Start
+            if feasible catalog start then
+                Some
+                    { Current = { belief.Current with Resources = Map.add resource (AtLeast(int64 count)) belief.Current.Resources }
+                      Start = start
+                      Relied = Set.add (ResourceQuantity resource) belief.Relied }
+            else
+                None
         | _ -> None
 
     let private settle optimistic belief fact known value implied refine =
@@ -48,12 +57,11 @@ module Planning =
         | FactIs(fact, value) ->
             settle optimistic belief (FactValue fact) belief.Current.Facts[fact] value false (fun knowledge ->
                 { knowledge with Facts = Map.add fact (Known value) knowledge.Facts })
-        | ResourceAtLeast(resource, count) -> atLeast optimistic belief resource (bigint count)
+        | ResourceAtLeast(resource, count) -> atLeast catalog optimistic belief resource (bigint count)
 
     let private satisfy catalog optimistic belief conditions =
         conditions
         |> List.fold (fun result condition -> Option.bind (fun current -> assume catalog optimistic current condition) result) (Some belief)
-        |> Option.filter (fun belief -> feasible catalog belief.Start)
 
     let private goal catalog optimistic belief = satisfy catalog optimistic belief catalog.Goal
 
@@ -72,7 +80,7 @@ module Planning =
             |> Map.fold
                 (fun result resource (consumed, _) ->
                     if consumed = 0I then result
-                    else Option.bind (fun current -> atLeast optimistic current resource consumed) result)
+                    else Option.bind (fun current -> atLeast catalog optimistic current resource consumed) result)
                 (satisfy catalog optimistic belief activity.Requirements)
 
         withInputs
@@ -86,8 +94,8 @@ module Planning =
                 | Capacity capacity, [] -> { span with High = min span.High (bigint capacity - after resource + span.Low) }
                 | _ -> span
             let start = belief.Start |> Map.map fitting
-            let overflows = start |> Map.filter (fun resource span -> span <> belief.Start[resource]) |> Map.keys |> Seq.map ResourceQuantity |> Set.ofSeq
-            if not (Set.isSubset overflows optimistic && feasible catalog start) then
+            let capped = start |> Map.filter (fun resource span -> span <> belief.Start[resource]) |> Map.keys |> Seq.map ResourceQuantity |> Set.ofSeq
+            if not (Set.isSubset capped optimistic && feasible catalog start) then
                 None
             else
                 Some
@@ -101,7 +109,7 @@ module Planning =
                                 | Exactly _ -> Exactly(int64 (after resource))
                                 | AtLeast _ -> AtLeast(int64 (after resource))) }
                       Start = start
-                      Relied = Set.union belief.Relied overflows })
+                      Relied = Set.union belief.Relied capped })
 
     type private Route =
         { Belief: Belief

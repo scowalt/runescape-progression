@@ -19,18 +19,6 @@ module internal Bounds =
         | Capacity capacity -> bigint capacity
         | OccupiesSpace space -> capacity space
 
-    let private occupied catalog knowledge space =
-        occupants catalog space |> List.sumBy (fun resource -> lower knowledge.Resources[resource])
-
-    let upper catalog knowledge resource =
-        match knowledge.Resources[resource] with
-        | Exactly count -> bigint count
-        | AtLeast count ->
-            match catalog.ResourceLimits[resource] with
-            | Capacity capacity -> bigint capacity - occupied catalog knowledge resource
-            | OccupiesSpace space ->
-                limit catalog resource - lower knowledge.Resources[space] - occupied catalog knowledge space + bigint count
-
     let lowers knowledge = knowledge.Resources |> Map.map (fun _ quantity -> lower quantity)
 
     let overfull catalog (counts: Map<ResourceId, bigint>) =
