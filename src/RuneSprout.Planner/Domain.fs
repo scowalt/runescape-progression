@@ -10,10 +10,36 @@ type Requirement =
     | FactIs of FactId * bool
     | ResourceAtLeast of ResourceId * int64
 
+type Knowledge<'T> =
+    | Known of 'T
+    | Unknown
+
+type Quantity =
+    | Exactly of int64
+    | AtLeast of int64
+
+type ResourceLimit =
+    | Capacity of int64
+    | OccupiesSpace of ResourceId
+
 type AccountKnowledge =
-    { Location: LocationId
-      Facts: Map<FactId, bool>
-      Resources: Map<ResourceId, int64> }
+    { Location: Knowledge<LocationId>
+      Facts: Map<FactId, Knowledge<bool>>
+      Resources: Map<ResourceId, Quantity> }
+
+type Assumption =
+    | AssumeLocation of LocationId
+    | AssumeFact of FactId * bool
+    | AssumeResource of ResourceId * Quantity
+
+type AccountSnapshot =
+    { Knowledge: AccountKnowledge
+      Assumptions: Assumption list }
+
+type AccountFact =
+    | CurrentLocation
+    | FactValue of FactId
+    | ResourceQuantity of ResourceId
 
 type Activity =
     { Id: ActivityId
@@ -26,7 +52,7 @@ type Activity =
 type PlanningCatalog =
     { Locations: Set<LocationId>
       Facts: Set<FactId>
-      ResourceCapacities: Map<ResourceId, int64>
+      ResourceLimits: Map<ResourceId, ResourceLimit>
       Goal: Requirement list
       Activities: Activity list
       DurationEstimatesMs: Map<ActivityId, int64> }
@@ -39,6 +65,7 @@ module SearchBudget =
 type InputError =
     | InvalidCatalog of string
     | InvalidAccountKnowledge of string
+    | ContradictoryAssumption of Assumption
     | InvalidSearchBudget of int
 
 type PlanningError =
@@ -51,7 +78,8 @@ type PlannedActivity =
       EstimatedMilliseconds: int64 }
 
 type PersonalPlan =
-    { Steps: PlannedActivity list
+    { Assumptions: Assumption list
+      Steps: PlannedActivity list
       TotalEstimatedMilliseconds: int64
       FinalKnowledge: AccountKnowledge }
 
@@ -66,5 +94,6 @@ type SearchReport =
 
 type PlanningOutcome =
     | ProvenFastest of PersonalPlan * SearchReport
-    | BestFound of PersonalPlan * SearchReport
-    | NoCompleteModeledRouteFound of SearchReport
+    | BestFound of PersonalPlan * SearchReport * cheaperRouteMayRelyOn: AccountFact list
+    | NeedsAccountInformation of necessary: AccountFact list * SearchReport
+    | NoCompleteModeledRouteFound of SearchReport * routeMayRelyOn: AccountFact list

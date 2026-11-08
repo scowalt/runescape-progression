@@ -4,9 +4,9 @@ open System.Collections.Generic
 
 module Planning =
     let private satisfies (state: AccountKnowledge) = function
-        | AtLocation location -> state.Location = location
-        | FactIs(fact, value) -> state.Facts[fact] = value
-        | ResourceAtLeast(resource, count) -> state.Resources[resource] >= count
+        | AtLocation location -> state.Location = Known location
+        | FactIs(fact, value) -> state.Facts[fact] = Known value
+        | ResourceAtLeast(resource, count) -> state.Resources[resource] >= Exactly count
 
     let private isGoal catalog state = List.forall (satisfies state) catalog.Goal
 
@@ -17,24 +17,26 @@ module Planning =
             let quantities =
                 state.Resources
                 |> Map.toList
-                |> List.map (fun (resource, count) ->
+                |> List.map (fun (resource, quantity) ->
+                    let count = match quantity with Exactly count -> count | AtLeast count -> count
+                    let capacity = match catalog.ResourceLimits[resource] with Capacity capacity -> capacity | OccupiesSpace _ -> 0L
                     let consumed = Map.tryFind resource activity.Consumes |> Option.defaultValue 0L
                     let produced = Map.tryFind resource activity.Produces |> Option.defaultValue 0L
                     if consumed > count then
                         None
                     else
                         let remaining = Checked.(-) count consumed
-                        if produced > Checked.(-) catalog.ResourceCapacities[resource] remaining then
+                        if produced > Checked.(-) capacity remaining then
                             None
                         else
-                            Some(resource, Checked.(+) remaining produced))
+                            Some(resource, Exactly(Checked.(+) remaining produced)))
 
             if quantities |> List.exists Option.isNone then
                 None
             else
                 Some
-                    { Location = activity.Destination |> Option.defaultValue state.Location
-                      Facts = Map.fold (fun facts key value -> Map.add key value facts) state.Facts activity.FactChanges
+                    { Location = activity.Destination |> Option.map Known |> Option.defaultValue state.Location
+                      Facts = Map.fold (fun facts key value -> Map.add key (Known value) facts) state.Facts activity.FactChanges
                       Resources = quantities |> List.choose id |> Map.ofList }
 
     type private Route =
@@ -49,7 +51,8 @@ module Planning =
             Error(CostOverflow id)
 
     let private personalPlan catalog route =
-        { Steps =
+        { Assumptions = []
+          Steps =
             route.ReversedSteps
             |> List.rev
             |> List.map (fun id -> { ActivityId = id; EstimatedMilliseconds = catalog.DurationEstimatesMs[id] })
@@ -83,8 +86,8 @@ module Planning =
                     outcome <-
                         Some(
                             match bestComplete with
-                            | Some best -> BestFound(personalPlan catalog best, report)
-                            | None -> NoCompleteModeledRouteFound report)
+                            | Some best -> BestFound(personalPlan catalog best, report, [])
+                            | None -> NoCompleteModeledRouteFound(report, []))
                 else
                     expanded <- Checked.(+) expanded 1
                     for activity in activities do
@@ -110,7 +113,7 @@ module Planning =
         | Some error -> Error [ error ]
         | None ->
             outcome
-            |> Option.defaultValue (NoCompleteModeledRouteFound { ExpandedStates = expanded; StoppingReason = FrontierExhausted })
+            |> Option.defaultValue (NoCompleteModeledRouteFound({ ExpandedStates = expanded; StoppingReason = FrontierExhausted }, []))
             |> Ok
 
     let private verifyPlan catalog knowledge (plan: PersonalPlan) =
@@ -140,16 +143,18 @@ module Planning =
             elif cost <> plan.TotalEstimatedMilliseconds then invalid "Replayed total differs from the route cost."
             else Ok())
 
-    let plan catalog knowledge budget =
-        match Validation.inputs catalog knowledge budget with
+    let plan catalog (snapshot: AccountSnapshot) budget =
+        let knowledge = snapshot.Knowledge
+        match Validation.inputs catalog snapshot budget with
         | [] ->
             search catalog knowledge budget
             |> Result.bind (fun outcome ->
                 match outcome with
                 | ProvenFastest(plan, _)
-                | BestFound(plan, _) ->
+                | BestFound(plan, _, _) ->
                     verifyPlan catalog knowledge plan
                     |> Result.mapError List.singleton
                     |> Result.map (fun () -> outcome)
+                | NeedsAccountInformation _
                 | NoCompleteModeledRouteFound _ -> Ok outcome)
         | errors -> Error(List.map InvalidInput errors)
