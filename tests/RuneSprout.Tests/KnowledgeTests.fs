@@ -329,6 +329,28 @@ let ``an unknown location in a one-location world is not missing information`` (
     let plan, _ = planFrom errand (knowledge Unknown [] []) |> proven
     Assert.Equal<ActivityId list>(steps [ "finish" ], stepIds plan)
 
+[<Fact>]
+let ``a store filled on the way cannot also have started full`` () =
+    let stock, used = ResourceId "stock", FactId "used"
+    let detour slow =
+        world
+            [ used ]
+            [ stock, Capacity 1L ]
+            [ FactIs(complete, true) ]
+            [ { activity "make" [ AtLocation home ] [] [ stock, 1L ] [] with Destination = Some field }
+              activity "use" [ AtLocation field ] [ stock, 1L ] [] [ used, true ]
+              activity "finish" [ FactIs(used, true); ResourceAtLeast(stock, 1L) ] [] [] [ complete, true ]
+              if slow then activity "slow" [ AtLocation home ] [] [] [ complete, true ] ]
+            [ "make", 1L; "use", 1L; "finish", 1L; if slow then "slow", 10L ]
+    let start = knowledge (Known home) [ used, Known false ] [ stock, AtLeast 0L ]
+
+    match planFrom (detour false) start with
+    | Ok(NoCompleteModeledRouteFound(report, [])) -> Assert.Equal(FrontierExhausted, report.StoppingReason)
+    | other -> failwithf "Expected no route in any consistent account, got %A" other
+
+    let plan, _ = planFrom (detour true) start |> proven
+    Assert.Equal<ActivityId list>(steps [ "slow" ], stepIds plan)
+
 let private bankChoice =
     world
         []
@@ -402,6 +424,17 @@ let ``assumptions that contradict known facts or each other are rejected`` () =
     match Planning.plan catalog { Knowledge = base'; Assumptions = agreeing } SearchBudget.defaultBudget with
     | Ok(NoCompleteModeledRouteFound _) -> ()
     | other -> failwithf "Expected agreeing assumptions to be accepted, got %A" other
+
+[<Fact>]
+let ``each count beyond its capacity or space is reported on its own`` () =
+    let catalog = world [] [ space, Capacity 2L; item, OccupiesSpace space; stored, Capacity 1L; coins, Capacity 5L ] [ FactIs(complete, true) ] [] []
+    let overfull = knowledge (Known home) [] [ space, AtLeast 1L; item, AtLeast 2L; stored, Exactly 2L; coins, AtLeast 5L ]
+    Assert.Equal<Result<PlanningOutcome, PlanningError list>>(
+        Error
+            [ InvalidInput(InvalidAccountKnowledge "Counts for ResourceId \"inventory-space\" and the resources occupying it exceed its modeled capacity.")
+              InvalidInput(InvalidAccountKnowledge "Count for ResourceId \"stored-product\" exceeds its modeled capacity.") ],
+        planFrom catalog overfull
+    )
 
 [<Fact>]
 let ``invalid knowledge assumptions and space declarations return input errors`` () =

@@ -285,6 +285,77 @@ let private unknowns (knowledge: AccountKnowledge) =
           | AtLeast _ -> ResourceQuantity id
           | Exactly _ -> () ]
 
+let private universalMinimum (world: PlanningCatalog) (accounts: ConcreteAccount list) =
+    let rec search frontier settled =
+        if Set.isEmpty frontier then
+            None
+        else
+            let (cost, group: Set<ConcreteAccount>) as next = Set.minElement frontier
+            let frontier = Set.remove next frontier
+            if Set.contains group settled then search frontier settled
+            elif group |> Set.forall (fun account -> List.forall (holds account) world.Goal) then Some cost
+            else
+                let successors =
+                    world.Activities
+                    |> List.choose (fun step ->
+                        let results = group |> Set.toList |> List.map (fun account -> perform world account step)
+                        if List.forall Option.isSome results then
+                            Some(cost + world.DurationEstimatesMs[step.Id], results |> List.choose id |> Set.ofList)
+                        else
+                            None)
+                search (Set.union frontier (Set.ofList successors)) (Set.add group settled)
+    search (Set.singleton (0L, Set.ofList accounts)) Set.empty
+
+let private essential world accounts fact =
+    let without account =
+        match fact with
+        | CurrentLocation -> { account with At = LocationId "" }
+        | FactValue id -> { account with Flags = Map.remove id account.Flags }
+        | ResourceQuantity id -> { account with Counts = Map.remove id account.Counts }
+    accounts |> List.groupBy without |> List.forall (fun (_, group) -> (universalMinimum world group).IsNone)
+
+let private judge (world: PlanningCatalog) knowledge =
+    let accounts = completions world knowledge
+    let unresolved = unknowns knowledge
+    let named (facts: AccountFact list) = Assert.True(Set.isSubset (set facts) (set unresolved), sprintf "%A names facts outside %A" facts unresolved)
+    let routed () = Assert.Contains(accounts, fun account -> (concreteMinimum world account).IsSome)
+    let result = Planning.plan world (snapshot knowledge) SearchBudget.defaultBudget
+    if Result.isOk result then Assert.NotEmpty accounts
+    match result with
+    | Error errors when errors |> List.forall (function InvalidInput(InvalidAccountKnowledge _) -> true | _ -> false) ->
+        Assert.Empty accounts
+        "invalid"
+    | Ok(ProvenFastest(plan, _)) ->
+        for account in accounts do
+            replayConcretely world plan account
+            Assert.Equal(Some plan.TotalEstimatedMilliseconds, concreteMinimum world account)
+        "proven"
+    | Ok(BestFound(plan, report, mayRelyOn)) ->
+        Assert.Equal(MinimumCostGoalSelected, report.StoppingReason)
+        Assert.NotEmpty mayRelyOn
+        named mayRelyOn
+        for account in accounts do replayConcretely world plan account
+        Assert.Contains(accounts, fun account ->
+            concreteMinimum world account |> Option.exists (fun cost -> cost < plan.TotalEstimatedMilliseconds))
+        "best-found"
+    | Ok(NeedsAccountInformation(necessary, _)) ->
+        Assert.NotEmpty necessary
+        named necessary
+        routed ()
+        Assert.Equal<Set<AccountFact>>(set (List.filter (essential world accounts) unresolved), set necessary)
+        "needs-information"
+    | Ok(NoCompleteModeledRouteFound(report, [])) ->
+        Assert.Equal(FrontierExhausted, report.StoppingReason)
+        for account in accounts do Assert.Equal(None, concreteMinimum world account)
+        "no-route"
+    | Ok(NoCompleteModeledRouteFound(report, mayRelyOn)) ->
+        Assert.Equal(FrontierExhausted, report.StoppingReason)
+        named mayRelyOn
+        routed ()
+        Assert.All(unresolved, fun fact -> Assert.False(essential world accounts fact, sprintf "%A is essential" fact))
+        "uncertain"
+    | other -> failwithf "Unexpected result %A" other
+
 [<Fact>]
 let ``partial-knowledge outcomes hold in every consistent concrete account`` () =
     let random = System.Random 4
@@ -299,60 +370,71 @@ let ``partial-knowledge outcomes hold in every consistent concrete account`` () 
         | _ -> ResourceAtLeast(pick [ item; stock; space ], int64 (1 + random.Next 2))
     let maybe chance value = if random.Next chance = 0 then [ value () ] else []
     let quantity () = if random.Next 2 = 0 then Exactly(int64 (random.Next 3)) else AtLeast(int64 (random.Next 2))
-    let mutable outcomes = Set.empty
-    for index in 0..299 do
-        let activities =
-            [ for number in 0..3 do
-                  { Id = ActivityId(sprintf "act-%d" number)
-                    Requirements = maybe 2 requirement @ maybe 3 requirement
-                    Consumes = Map.ofList (maybe 3 (fun () -> pick [ item; stock ], 1L))
-                    Produces = Map.ofList (maybe 2 (fun () -> pick [ item; stock ], 1L))
-                    Destination = if random.Next 3 = 0 then Some(pick locations) else None
-                    FactChanges = Map.ofList (maybe 3 (fun () -> pick facts, random.Next 2 = 0)) } ]
-        let world =
-            { Locations = Set.ofList locations
-              Facts = Set.ofList facts
-              ResourceLimits = Map.ofList [ space, Capacity 2L; item, OccupiesSpace space; stock, Capacity 2L ]
-              Goal = requirement () :: maybe 2 requirement
-              Activities = activities
-              DurationEstimatesMs = activities |> List.map (fun step -> step.Id, int64 (random.Next 4)) |> Map.ofList }
-        let knowledge =
-            { Location = if random.Next 2 = 0 then Known(pick locations) else Unknown
-              Facts = facts |> List.map (fun id -> id, if random.Next 2 = 0 then Known(random.Next 2 = 0) else Unknown) |> Map.ofList
-              Resources = Map.ofList [ space, quantity (); item, quantity (); stock, quantity () ] }
-        let accounts = completions world knowledge
-        let unresolved = unknowns knowledge
-        let named (facts: AccountFact list) = Assert.True(Set.isSubset (set facts) (set unresolved), sprintf "%A names facts outside %A" facts unresolved)
-        let result = Planning.plan world (snapshot knowledge) SearchBudget.defaultBudget
-        if Result.isOk result then Assert.NotEmpty accounts
-        match result with
-        | Error [ InvalidInput(InvalidAccountKnowledge _) ] -> Assert.Empty accounts
-        | Ok(ProvenFastest(plan, _)) ->
-            outcomes <- Set.add "proven" outcomes
-            for account in accounts do
-                replayConcretely world plan account
-                Assert.Equal(Some plan.TotalEstimatedMilliseconds, concreteMinimum world account)
-        | Ok(BestFound(plan, report, mayRelyOn)) ->
-            outcomes <- Set.add "best-found" outcomes
-            Assert.Equal(MinimumCostGoalSelected, report.StoppingReason)
-            Assert.NotEmpty mayRelyOn
-            named mayRelyOn
-            for account in accounts do replayConcretely world plan account
-            Assert.Contains(accounts, fun account ->
-                concreteMinimum world account |> Option.exists (fun cost -> cost < plan.TotalEstimatedMilliseconds))
-        | Ok(NeedsAccountInformation(necessary, _)) ->
-            outcomes <- Set.add "needs-information" outcomes
-            Assert.NotEmpty necessary
-            Assert.Contains(accounts, fun account -> (concreteMinimum world account).IsSome)
-            named necessary
-        | Ok(NoCompleteModeledRouteFound(report, [])) ->
-            outcomes <- Set.add "no-route" outcomes
-            Assert.Equal(FrontierExhausted, report.StoppingReason)
-            for account in accounts do Assert.Equal(None, concreteMinimum world account)
-        | Ok(NoCompleteModeledRouteFound(report, mayRelyOn)) ->
-            outcomes <- Set.add "uncertain" outcomes
-            Assert.Equal(FrontierExhausted, report.StoppingReason)
-            named mayRelyOn
-            Assert.Contains(accounts, fun account -> (concreteMinimum world account).IsSome)
-        | other -> failwithf "World %d: unexpected result %A" index other
-    Assert.Equal<Set<string>>(set [ "proven"; "best-found"; "needs-information"; "no-route"; "uncertain" ], outcomes)
+    let outcomes =
+        [ for _ in 0..299 do
+              let activities =
+                  [ for number in 0..3 do
+                        { Id = ActivityId(sprintf "act-%d" number)
+                          Requirements = maybe 2 requirement @ maybe 3 requirement
+                          Consumes = Map.ofList (maybe 3 (fun () -> pick [ item; stock ], 1L))
+                          Produces = Map.ofList (maybe 2 (fun () -> pick [ item; stock ], 1L))
+                          Destination = if random.Next 3 = 0 then Some(pick locations) else None
+                          FactChanges = Map.ofList (maybe 3 (fun () -> pick facts, random.Next 2 = 0)) } ]
+              let world =
+                  { Locations = Set.ofList locations
+                    Facts = Set.ofList facts
+                    ResourceLimits = Map.ofList [ space, Capacity 2L; item, OccupiesSpace space; stock, Capacity 2L ]
+                    Goal = requirement () :: maybe 2 requirement
+                    Activities = activities
+                    DurationEstimatesMs = activities |> List.map (fun step -> step.Id, int64 (random.Next 4)) |> Map.ofList }
+              let knowledge =
+                  { Location = if random.Next 2 = 0 then Known(pick locations) else Unknown
+                    Facts = facts |> List.map (fun id -> id, if random.Next 2 = 0 then Known(random.Next 2 = 0) else Unknown) |> Map.ofList
+                    Resources = Map.ofList [ space, quantity (); item, quantity (); stock, quantity () ] }
+              judge world knowledge ]
+    Assert.Equal<Set<string>>(set [ "invalid"; "proven"; "best-found"; "needs-information"; "no-route"; "uncertain" ], set outcomes)
+
+[<Fact>]
+let ``adding to unknown capped counts never invents a starting account`` () =
+    let random = System.Random 0
+    let pick (values: 'a list) = values[random.Next values.Length]
+    let chance n = random.Next n = 0
+    let home, away = LocationId "home", LocationId "away"
+    let used = FactId "used"
+    let store, other, space, item = ResourceId "b0", ResourceId "b1", ResourceId "inv", ResourceId "o0"
+    let counted = [ store; other; space; item ]
+    let outcomes =
+        [ for _ in 0..599 do
+              let activities =
+                  [ for number in 0..3 do
+                        { Id = ActivityId(sprintf "act-%d" number)
+                          Requirements =
+                            [ if chance 2 then AtLocation(pick [ home; away ])
+                              if chance 3 then ResourceAtLeast(pick counted, int64 (1 + random.Next 2))
+                              if chance 4 then FactIs(used, chance 2) ]
+                          Consumes = Map.ofList [ if chance 2 then pick [ store; store; other; item ], 1L ]
+                          Produces = Map.ofList [ if chance 2 then pick [ store; store; other; item ], 1L ]
+                          Destination = if chance 2 then Some(pick [ home; away ]) else None
+                          FactChanges = Map.ofList [ if chance 3 then used, true ] } ]
+              let world =
+                  { Locations = set [ home; away ]
+                    Facts = set [ used ]
+                    ResourceLimits =
+                      Map.ofList
+                          [ store, Capacity(if chance 3 then 2L else 1L)
+                            other, Capacity 1L
+                            space, Capacity 2L
+                            item, OccupiesSpace space ]
+                    Goal =
+                      [ if chance 2 then FactIs(used, true)
+                        ResourceAtLeast(pick counted, 1L)
+                        if chance 3 then AtLocation(pick [ home; away ]) ]
+                    Activities = activities
+                    DurationEstimatesMs = activities |> List.map (fun step -> step.Id, int64 (1 + random.Next 10)) |> Map.ofList }
+              let knowledge =
+                  { Location = if chance 4 then Unknown else Known home
+                    Facts = Map.ofList [ used, Known false ]
+                    Resources = counted |> List.map (fun id -> id, if chance 4 then Exactly(int64 (random.Next 2)) else AtLeast 0L) |> Map.ofList }
+              judge world knowledge ]
+    Assert.Contains("needs-information", outcomes)
+    Assert.Contains("best-found", outcomes)
