@@ -351,6 +351,21 @@ let ``a store filled on the way cannot also have started full`` () =
     let plan, _ = planFrom (detour true) start |> proven
     Assert.Equal<ActivityId list>(steps [ "slow" ], stepIds plan)
 
+[<Fact>]
+let ``occupants too large for any space fail closed instead of overflowing`` () =
+    let spare = ResourceId "spare-item"
+    let fill =
+        world
+            []
+            [ space, Capacity 1L; item, OccupiesSpace space; spare, OccupiesSpace space ]
+            [ FactIs(complete, true) ]
+            [ activity "fill" [] [] [ item, System.Int64.MaxValue; spare, System.Int64.MaxValue ] [ complete, true ] ]
+            [ "fill", 1L ]
+
+    match planFrom fill (knowledge (Known home) [] [ space, AtLeast 0L; item, Exactly 0L; spare, Exactly 0L ]) with
+    | Ok(NoCompleteModeledRouteFound(report, [])) -> Assert.Equal(FrontierExhausted, report.StoppingReason)
+    | other -> failwithf "Expected no route in any consistent account, got %A" other
+
 let private bankChoice =
     world
         []
