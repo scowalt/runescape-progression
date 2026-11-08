@@ -9,3 +9,5 @@ let activity id requirements consumes produces changes =
       Produces = Map.ofList produces
       Destination = None
       FactChanges = Map.ofList changes }
+
+let snapshot knowledge = { Knowledge = knowledge; Assumptions = [] }

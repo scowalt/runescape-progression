@@ -11,15 +11,15 @@ let private token = ResourceId "token"
 let private catalog activities costs =
     { Locations = Set.singleton home
       Facts = Set.singleton complete
-      ResourceCapacities = Map.ofList [ token, 1L ]
+      ResourceLimits = Map.ofList [ token, Capacity 1L ]
       Goal = [ FactIs(complete, true) ]
       Activities = activities
       DurationEstimatesMs = Map.ofList costs }
 
 let private start =
-    { Location = home
-      Facts = Map.ofList [ complete, false ]
-      Resources = Map.ofList [ token, 0L ] }
+    { Location = Known home
+      Facts = Map.ofList [ complete, Known false ]
+      Resources = Map.ofList [ token, Exactly 0L ] }
 
 let private proven = function
     | Ok(ProvenFastest(plan, report)) -> plan, report
@@ -36,12 +36,12 @@ let ``complete route costs include resource preparation`` () =
               activity "paid" [] [ token, 1L ] [] [ complete, true ] ]
             [ ActivityId "free", 20L; ActivityId "prepare", 5L; ActivityId "paid", 8L ]
 
-    let plan, _ = Planning.plan world start SearchBudget.defaultBudget |> proven
+    let plan, _ = Planning.plan world (snapshot start) SearchBudget.defaultBudget |> proven
 
     Assert.Equal<ActivityId list>([ ActivityId "prepare"; ActivityId "paid" ], stepIds plan)
     Assert.Equal(13L, plan.TotalEstimatedMilliseconds)
-    Assert.Equal(0L, plan.FinalKnowledge.Resources[token])
-    Assert.True(plan.FinalKnowledge.Facts[complete])
+    Assert.Equal(Exactly 0L, plan.FinalKnowledge.Resources[token])
+    Assert.Equal(Known true, plan.FinalKnowledge.Facts[complete])
 
 [<Fact>]
 let ``cutoff retains the cheapest discovered complete route before queue selection`` () =
@@ -54,8 +54,8 @@ let ``cutoff retains the cheapest discovered complete route before queue selecti
             [ ActivityId "a-expensive", 20L; ActivityId "b-cheaper", 13L
               ActivityId "c-explore", 1L; ActivityId "d-finish", 1L ]
 
-    match Planning.plan world start { MaxExpandedStates = 1 } with
-    | Ok(BestFound(plan, report)) ->
+    match Planning.plan world (snapshot start) { MaxExpandedStates = 1 } with
+    | Ok(BestFound(plan, report, [])) ->
         Assert.Equal<ActivityId list>([ ActivityId "b-cheaper" ], stepIds plan)
         Assert.Equal(13L, plan.TotalEstimatedMilliseconds)
         Assert.Equal({ ExpandedStates = 1; StoppingReason = ExpansionBudgetExhausted }, report)
@@ -68,7 +68,7 @@ let ``negative duration is invalid even on an unreachable activity`` () =
             [ activity "invalid" [ FactIs(complete, true) ] [] [] [] ]
             [ ActivityId "invalid", -1L ]
 
-    match Planning.plan world start SearchBudget.defaultBudget with
+    match Planning.plan world (snapshot start) SearchBudget.defaultBudget with
     | Error errors -> Assert.Contains(InvalidInput(InvalidCatalog "Duration for ActivityId \"invalid\" must be nonnegative."), errors)
     | other -> failwithf "Expected invalid duration, got %A" other
 
@@ -78,7 +78,7 @@ let ``negative duration is invalid even on an unreachable activity`` () =
 let ``search budget must be positive`` limit =
     Assert.Equal<Result<PlanningOutcome, PlanningError list>>(
         Error [ InvalidInput(InvalidSearchBudget limit) ],
-        Planning.plan (catalog [] []) start { MaxExpandedStates = limit })
+        Planning.plan (catalog [] []) (snapshot start) { MaxExpandedStates = limit })
 
 [<Theory>]
 [<InlineData(0L)>]
@@ -90,7 +90,7 @@ let ``route totals use checked integer milliseconds`` finalCost =
               activity "finish" [] [ token, 1L ] [] [ complete, true ] ]
             [ ActivityId "prepare", System.Int64.MaxValue; ActivityId "finish", finalCost ]
 
-    let result = Planning.plan world start SearchBudget.defaultBudget
+    let result = Planning.plan world (snapshot start) SearchBudget.defaultBudget
     if finalCost = 0L then
         let plan, _ = proven result
         Assert.Equal(System.Int64.MaxValue, plan.TotalEstimatedMilliseconds)
@@ -107,7 +107,7 @@ let ``invalid model references and incomplete snapshots return input errors`` ()
           { valid with Activities = [ finish; finish ] }, start
           { valid with Locations = Set.empty }, start
           { valid with Facts = Set.add (FactId "") valid.Facts }, start
-          { valid with ResourceCapacities = Map.ofList [ token, -1L ] }, start
+          { valid with ResourceLimits = Map.ofList [ token, Capacity -1L ] }, start
           { valid with Goal = [ FactIs(FactId "undeclared", true) ] }, start
           { valid with Activities = [ { finish with Requirements = [ AtLocation(LocationId "missing") ] } ] }, start
           { valid with Activities = [ { finish with Requirements = [ ResourceAtLeast(token, -1L) ] } ] }, start
@@ -115,16 +115,18 @@ let ``invalid model references and incomplete snapshots return input errors`` ()
           { valid with Activities = [ { finish with FactChanges = Map.ofList [ FactId "missing", true ] } ] }, start
           { valid with Activities = [ { finish with Consumes = Map.ofList [ token, -1L ] } ] }, start
           { valid with Activities = [ { finish with Produces = Map.ofList [ ResourceId "missing", 1L ] } ] }, start
-          valid, { start with Location = LocationId "missing" }
+          valid, { start with Location = Known(LocationId "missing") }
           valid, { start with Facts = Map.empty }
-          valid, { start with Facts = Map.add (FactId "missing") false start.Facts }
+          valid, { start with Facts = Map.add (FactId "missing") Unknown start.Facts }
           valid, { start with Resources = Map.empty }
-          valid, { start with Resources = Map.ofList [ token, -1L ] }
-          valid, { start with Resources = Map.ofList [ token, 2L ] }
-          valid, { start with Resources = Map.add (ResourceId "missing") 0L start.Resources } ]
+          valid, { start with Resources = Map.ofList [ token, Exactly -1L ] }
+          valid, { start with Resources = Map.ofList [ token, AtLeast -1L ] }
+          valid, { start with Resources = Map.ofList [ token, Exactly 2L ] }
+          valid, { start with Resources = Map.ofList [ token, AtLeast 2L ] }
+          valid, { start with Resources = Map.add (ResourceId "missing") (AtLeast 0L) start.Resources } ]
 
     for world, knowledge in invalidInputs do
-        match Planning.plan world knowledge SearchBudget.defaultBudget with
+        match Planning.plan world (snapshot knowledge) SearchBudget.defaultBudget with
         | Error errors ->
             Assert.NotEmpty errors
             Assert.All(errors, fun error -> match error with InvalidInput _ -> () | _ -> failwithf "%A" error)
@@ -138,7 +140,7 @@ let ``the cheapest isolated method loses when its preparation is included`` () =
               activity "prepare" [] [] [ token, 1L ] []
               activity "cheap-isolated" [] [ token, 1L ] [] [ complete, true ] ]
             [ ActivityId "direct", 3L; ActivityId "prepare", 10L; ActivityId "cheap-isolated", 1L ]
-    let plan, _ = Planning.plan world start SearchBudget.defaultBudget |> proven
+    let plan, _ = Planning.plan world (snapshot start) SearchBudget.defaultBudget |> proven
     Assert.Equal<ActivityId list>([ ActivityId "direct" ], stepIds plan)
     Assert.Equal(3L, plan.TotalEstimatedMilliseconds)
 
@@ -146,24 +148,24 @@ let ``the cheapest isolated method loses when its preparation is included`` () =
 let ``budget without a route differs from exhaustive modeled failure`` () =
     let world = catalog [ activity "acquire" [] [] [ token, 1L ] [] ] [ ActivityId "acquire", 0L ]
     Assert.Equal<Result<PlanningOutcome, PlanningError list>>(
-        Ok(NoCompleteModeledRouteFound { ExpandedStates = 1; StoppingReason = ExpansionBudgetExhausted }),
-        Planning.plan world start { MaxExpandedStates = 1 })
+        Ok(NoCompleteModeledRouteFound({ ExpandedStates = 1; StoppingReason = ExpansionBudgetExhausted }, [])),
+        Planning.plan world (snapshot start) { MaxExpandedStates = 1 })
     Assert.Equal<Result<PlanningOutcome, PlanningError list>>(
-        Ok(NoCompleteModeledRouteFound { ExpandedStates = 2; StoppingReason = FrontierExhausted }),
-        Planning.plan world start { MaxExpandedStates = 2 })
+        Ok(NoCompleteModeledRouteFound({ ExpandedStates = 2; StoppingReason = FrontierExhausted }, [])),
+        Planning.plan world (snapshot start) { MaxExpandedStates = 2 })
 
 [<Fact>]
 let ``selecting a minimum goal needs no outgoing expansion even at the limit`` () =
     let world = catalog [ activity "finish" [] [] [] [ complete, true ] ] [ ActivityId "finish", 1L ]
-    let plan, report = Planning.plan world start { MaxExpandedStates = 1 } |> proven
+    let plan, report = Planning.plan world (snapshot start) { MaxExpandedStates = 1 } |> proven
     Assert.Equal(1L, plan.TotalEstimatedMilliseconds)
     Assert.Equal({ ExpandedStates = 1; StoppingReason = MinimumCostGoalSelected }, report)
 
 [<Fact>]
 let ``already completed goal has zero remaining work and no expansion`` () =
     let world = catalog [ activity "future" [] [] [ token, 1L ] [] ] [ ActivityId "future", 1L ]
-    let knowledge = { start with Facts = Map.ofList [ complete, true ] }
-    let plan, report = Planning.plan world knowledge SearchBudget.defaultBudget |> proven
+    let knowledge = { start with Facts = Map.ofList [ complete, Known true ] }
+    let plan, report = Planning.plan world (snapshot knowledge) SearchBudget.defaultBudget |> proven
     Assert.Empty plan.Steps
     Assert.Equal(0L, plan.TotalEstimatedMilliseconds)
     Assert.Equal(knowledge, plan.FinalKnowledge)
@@ -178,8 +180,8 @@ let ``goal-dependent access cannot supply a prerequisite and zero cost cycles te
               activity "wait" [] [] [] [] ]
             [ ActivityId "circular-access", 0L; ActivityId "finish", 0L; ActivityId "wait", 0L ]
     Assert.Equal<Result<PlanningOutcome, PlanningError list>>(
-        Ok(NoCompleteModeledRouteFound { ExpandedStates = 1; StoppingReason = FrontierExhausted }),
-        Planning.plan world start SearchBudget.defaultBudget)
+        Ok(NoCompleteModeledRouteFound({ ExpandedStates = 1; StoppingReason = FrontierExhausted }, [])),
+        Planning.plan world (snapshot start) SearchBudget.defaultBudget)
 
 [<Fact>]
 let ``future benefits are not appended after goal completion`` () =
@@ -188,9 +190,9 @@ let ``future benefits are not appended after goal completion`` () =
             [ activity "finish" [] [] [] [ complete, true ]
               activity "future-benefit" [ FactIs(complete, true) ] [] [ token, 1L ] [] ]
             [ ActivityId "finish", System.Int64.MaxValue; ActivityId "future-benefit", 1L ]
-    let plan, report = Planning.plan world start SearchBudget.defaultBudget |> proven
+    let plan, report = Planning.plan world (snapshot start) SearchBudget.defaultBudget |> proven
     Assert.Equal<ActivityId list>([ ActivityId "finish" ], stepIds plan)
-    Assert.Equal(0L, plan.FinalKnowledge.Resources[token])
+    Assert.Equal(Exactly 0L, plan.FinalKnowledge.Resources[token])
     Assert.Equal(1, report.ExpandedStates)
 
 [<Fact>]
@@ -200,10 +202,10 @@ let ``stable activity ordering resolves equal costs independently of input order
             [ activity "z-last" [] [] [] [ complete, true ]
               activity "a-first" [] [] [] [ complete, true ] ]
             [ ActivityId "z-last", 1L; ActivityId "a-first", 1L ]
-    let expected = Planning.plan world start SearchBudget.defaultBudget
+    let expected = Planning.plan world (snapshot start) SearchBudget.defaultBudget
     for _ in 1..10 do
         Assert.Equal<Result<PlanningOutcome, PlanningError list>>(
-            expected, Planning.plan { world with Activities = List.rev world.Activities } start SearchBudget.defaultBudget)
+            expected, Planning.plan { world with Activities = List.rev world.Activities } (snapshot start) SearchBudget.defaultBudget)
     let plan, _ = proven expected
     Assert.Equal<ActivityId list>([ ActivityId "a-first" ], stepIds plan)
 
@@ -214,7 +216,7 @@ let ``cost comparisons retain millisecond differences`` () =
             [ activity "a-slower" [] [] [] [ complete, true ]
               activity "z-faster" [] [] [] [ complete, true ] ]
             [ ActivityId "a-slower", 1001L; ActivityId "z-faster", 1000L ]
-    let plan, _ = Planning.plan world start SearchBudget.defaultBudget |> proven
+    let plan, _ = Planning.plan world (snapshot start) SearchBudget.defaultBudget |> proven
     Assert.Equal<ActivityId list>([ ActivityId "z-faster" ], stepIds plan)
 
 [<Fact>]
@@ -223,20 +225,20 @@ let ``resource capacity is a modeled rule not a truncation or arithmetic wrap`` 
         { catalog
               [ activity "overfill" [] [] [ token, System.Int64.MaxValue ] [ complete, true ] ]
               [ ActivityId "overfill", 1L ] with
-            ResourceCapacities = Map.ofList [ token, System.Int64.MaxValue ] }
-    let knowledge = { start with Resources = Map.ofList [ token, 1L ] }
+            ResourceLimits = Map.ofList [ token, Capacity System.Int64.MaxValue ] }
+    let knowledge = { start with Resources = Map.ofList [ token, Exactly 1L ] }
     Assert.Equal<Result<PlanningOutcome, PlanningError list>>(
-        Ok(NoCompleteModeledRouteFound { ExpandedStates = 1; StoppingReason = FrontierExhausted }),
-        Planning.plan world knowledge SearchBudget.defaultBudget)
+        Ok(NoCompleteModeledRouteFound({ ExpandedStates = 1; StoppingReason = FrontierExhausted }, [])),
+        Planning.plan world (snapshot knowledge) SearchBudget.defaultBudget)
 
 [<Fact>]
 let ``default budget stops at one hundred thousand outgoing evaluations`` () =
     let world =
         { catalog [ activity "increment" [] [] [ token, 1L ] [] ] [ ActivityId "increment", 0L ] with
-            ResourceCapacities = Map.ofList [ token, 100_001L ] }
+            ResourceLimits = Map.ofList [ token, Capacity 100_001L ] }
     Assert.Equal<Result<PlanningOutcome, PlanningError list>>(
-        Ok(NoCompleteModeledRouteFound { ExpandedStates = 100_000; StoppingReason = ExpansionBudgetExhausted }),
-        Planning.plan world start SearchBudget.defaultBudget)
+        Ok(NoCompleteModeledRouteFound({ ExpandedStates = 100_000; StoppingReason = ExpansionBudgetExhausted }, [])),
+        Planning.plan world (snapshot start) SearchBudget.defaultBudget)
 
 [<Fact>]
 let ``improved states supersede stale queue entries without spending expansions`` () =
@@ -252,7 +254,7 @@ let ``improved states supersede stale queue entries without spending expansions`
               [ ActivityId "direct", 10L; ActivityId "detour", 1L
                 ActivityId "improve", 1L; ActivityId "finish", 20L ] with
             Locations = Set.ofList [ home; intermediate; detour ] }
-    let plan, report = Planning.plan world start { MaxExpandedStates = 3 } |> proven
+    let plan, report = Planning.plan world (snapshot start) { MaxExpandedStates = 3 } |> proven
     Assert.Equal(22L, plan.TotalEstimatedMilliseconds)
     Assert.Equal(3, report.ExpandedStates)
     Assert.Equal<ActivityId list>([ ActivityId "detour"; ActivityId "improve"; ActivityId "finish" ], stepIds plan)

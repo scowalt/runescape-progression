@@ -3,44 +3,123 @@ namespace RuneSprout.Planner
 open System.Collections.Generic
 
 module Planning =
-    let private satisfies (state: AccountKnowledge) = function
-        | AtLocation location -> state.Location = location
-        | FactIs(fact, value) -> state.Facts[fact] = value
-        | ResourceAtLeast(resource, count) -> state.Resources[resource] >= count
+    type private Span = { Low: bigint; High: bigint }
 
-    let private isGoal catalog state = List.forall (satisfies state) catalog.Goal
+    type private Belief =
+        { Current: AccountKnowledge
+          Start: Map<ResourceId, Span>
+          Relied: Set<AccountFact> }
 
-    let private transition catalog state activity =
-        if not (List.forall (satisfies state) activity.Requirements) then
-            None
-        else
-            let quantities =
-                state.Resources
-                |> Map.toList
-                |> List.map (fun (resource, count) ->
-                    let consumed = Map.tryFind resource activity.Consumes |> Option.defaultValue 0L
-                    let produced = Map.tryFind resource activity.Produces |> Option.defaultValue 0L
-                    if consumed > count then
-                        None
-                    else
-                        let remaining = Checked.(-) count consumed
-                        if produced > Checked.(-) catalog.ResourceCapacities[resource] remaining then
-                            None
-                        else
-                            Some(resource, Checked.(+) remaining produced))
+    let private believe catalog knowledge =
+        { Current = knowledge
+          Start =
+            knowledge.Resources
+            |> Map.map (fun resource quantity ->
+                match quantity with
+                | Exactly count -> { Low = bigint count; High = bigint count }
+                | AtLeast count -> { Low = bigint count; High = Bounds.limit catalog resource })
+          Relied = Set.empty }
 
-            if quantities |> List.exists Option.isNone then
+    let private feasible catalog (start: Map<ResourceId, Span>) =
+        start |> Map.forall (fun _ span -> span.Low <= span.High)
+        && List.isEmpty (Bounds.overfull catalog (start |> Map.map (fun _ span -> span.Low)))
+
+    let private atLeast catalog optimistic belief resource count =
+        match belief.Current.Resources[resource] with
+        | quantity when Bounds.lower quantity >= count -> Some belief
+        | AtLeast current when Set.contains (ResourceQuantity resource) optimistic ->
+            let span = belief.Start[resource]
+            let start = Map.add resource { span with Low = span.Low + count - bigint current } belief.Start
+            if feasible catalog start then
+                Some
+                    { Current = { belief.Current with Resources = Map.add resource (AtLeast(int64 count)) belief.Current.Resources }
+                      Start = start
+                      Relied = Set.add (ResourceQuantity resource) belief.Relied }
+            else
+                None
+        | _ -> None
+
+    let private settle optimistic belief fact known value implied refine =
+        match known with
+        | Known current when current = value -> Some belief
+        | Unknown when implied -> Some { belief with Current = refine belief.Current }
+        | Unknown when Set.contains fact optimistic ->
+            Some
+                { belief with
+                    Current = refine belief.Current
+                    Relied = Set.add fact belief.Relied }
+        | _ -> None
+
+    let private assume catalog optimistic belief = function
+        | AtLocation location ->
+            settle optimistic belief CurrentLocation belief.Current.Location location (catalog.Locations = Set.singleton location) (fun knowledge ->
+                { knowledge with Location = Known location })
+        | FactIs(fact, value) ->
+            settle optimistic belief (FactValue fact) belief.Current.Facts[fact] value false (fun knowledge ->
+                { knowledge with Facts = Map.add fact (Known value) knowledge.Facts })
+        | ResourceAtLeast(resource, count) -> atLeast catalog optimistic belief resource (bigint count)
+
+    let private satisfy catalog optimistic belief conditions =
+        conditions
+        |> List.fold (fun result condition -> Option.bind (fun current -> assume catalog optimistic current condition) result) (Some belief)
+
+    let private goal catalog optimistic belief = satisfy catalog optimistic belief catalog.Goal
+
+    let private effects catalog (activity: Activity) resource =
+        let amount id (source: Map<ResourceId, int64>) = Map.tryFind id source |> Option.map bigint |> Option.defaultValue 0I
+        match Bounds.occupants catalog resource with
+        | [] -> amount resource activity.Consumes, amount resource activity.Produces
+        | occupants ->
+            let net = occupants |> List.sumBy (fun id -> amount id activity.Produces - amount id activity.Consumes)
+            max net 0I, max -net 0I
+
+    let private transition catalog optimistic belief activity =
+        let changes = belief.Current.Resources |> Map.map (fun resource _ -> effects catalog activity resource)
+        let withInputs =
+            changes
+            |> Map.fold
+                (fun result resource (consumed, _) ->
+                    if consumed = 0I then result
+                    else Option.bind (fun current -> atLeast catalog optimistic current resource consumed) result)
+                (satisfy catalog optimistic belief activity.Requirements)
+
+        withInputs
+        |> Option.bind (fun belief ->
+            let state = belief.Current
+            let after resource =
+                let consumed, produced = changes[resource]
+                Bounds.lower state.Resources[resource] - consumed + produced
+            let fitting resource span =
+                match catalog.ResourceLimits[resource], Bounds.occupants catalog resource with
+                | Capacity capacity, [] -> { span with High = min span.High (bigint capacity - after resource + span.Low) }
+                | _ -> span
+            let start = belief.Start |> Map.map fitting
+            let capped = start |> Map.filter (fun resource span -> span <> belief.Start[resource]) |> Map.keys |> Seq.map ResourceQuantity |> Set.ofSeq
+            if not (Set.isSubset capped optimistic && feasible catalog start) then
                 None
             else
                 Some
-                    { Location = activity.Destination |> Option.defaultValue state.Location
-                      Facts = Map.fold (fun facts key value -> Map.add key value facts) state.Facts activity.FactChanges
-                      Resources = quantities |> List.choose id |> Map.ofList }
+                    { Current =
+                        { Location = activity.Destination |> Option.map Known |> Option.defaultValue state.Location
+                          Facts = Map.fold (fun facts key value -> Map.add key (Known value) facts) state.Facts activity.FactChanges
+                          Resources =
+                            state.Resources
+                            |> Map.map (fun resource quantity ->
+                                match quantity with
+                                | Exactly _ -> Exactly(int64 (after resource))
+                                | AtLeast _ -> AtLeast(int64 (after resource))) }
+                      Start = start
+                      Relied = Set.union belief.Relied capped })
 
     type private Route =
-        { State: AccountKnowledge
+        { Belief: Belief
           Cost: int64
           ReversedSteps: ActivityId list }
+
+    type private PassEnd =
+        | Reached of Route
+        | OutOfBudget of Route option
+        | Exhausted
 
     let private addCost catalog cost id =
         try
@@ -48,78 +127,124 @@ module Planning =
         with :? System.OverflowException ->
             Error(CostOverflow id)
 
-    let private personalPlan catalog route =
-        { Steps =
-            route.ReversedSteps
-            |> List.rev
-            |> List.map (fun id -> { ActivityId = id; EstimatedMilliseconds = catalog.DurationEstimatesMs[id] })
-          TotalEstimatedMilliseconds = route.Cost
-          FinalKnowledge = route.State }
-
-    let private search (catalog: PlanningCatalog) (knowledge: AccountKnowledge) (budget: SearchBudget) : Result<PlanningOutcome, PlanningError list> =
+    let private explore catalog knowledge optimistic budget limit =
         let activities = catalog.Activities |> List.sortBy (fun activity -> activity.Id)
         let frontier = PriorityQueue<Route, struct (int64 * int64)>()
-        let costs = Dictionary<AccountKnowledge, int64>()
+        let costs = Dictionary<Belief, int64>()
         let mutable sequence = 0L
         let enqueue route =
             frontier.Enqueue(route, struct (route.Cost, sequence))
             sequence <- Checked.(+) sequence 1L
 
-        let initial = { State = knowledge; Cost = 0L; ReversedSteps = [] }
-        costs.Add(knowledge, 0L)
-        enqueue initial
+        let start = believe catalog knowledge
+        costs.Add(start, 0L)
+        enqueue { Belief = start; Cost = 0L; ReversedSteps = [] }
         let mutable expanded = 0
-        let mutable outcome = None
+        let mutable ending = None
         let mutable bestComplete: Route option = None
         let mutable failure = None
 
-        while outcome.IsNone && failure.IsNone && frontier.Count > 0 do
+        while ending.IsNone && failure.IsNone && frontier.Count > 0 do
             let route = frontier.Dequeue()
-            if costs[route.State] = route.Cost then
-                if isGoal catalog route.State then
-                    outcome <- Some(ProvenFastest(personalPlan catalog route, { ExpandedStates = expanded; StoppingReason = MinimumCostGoalSelected }))
-                elif expanded >= budget.MaxExpandedStates then
-                    let report = { ExpandedStates = expanded; StoppingReason = ExpansionBudgetExhausted }
-                    outcome <-
-                        Some(
-                            match bestComplete with
-                            | Some best -> BestFound(personalPlan catalog best, report)
-                            | None -> NoCompleteModeledRouteFound report)
-                else
+            if costs[route.Belief] = route.Cost then
+                match limit, goal catalog optimistic route.Belief with
+                | Some limit, _ when route.Cost >= limit -> ending <- Some Exhausted
+                | _, Some reached -> ending <- Some(Reached { route with Belief = { route.Belief with Relied = reached.Relied } })
+                | _ when expanded >= budget -> ending <- Some(OutOfBudget bestComplete)
+                | _ ->
                     expanded <- Checked.(+) expanded 1
                     for activity in activities do
                         if failure.IsNone then
-                            match transition catalog route.State activity with
+                            match transition catalog optimistic route.Belief activity with
                             | None -> ()
-                            | Some state ->
+                            | Some belief ->
                                 match addCost catalog route.Cost activity.Id with
                                 | Error error -> failure <- Some error
                                 | Ok cost ->
-                                    match costs.TryGetValue state with
+                                    match costs.TryGetValue belief with
                                     | true, previous when previous <= cost -> ()
                                     | _ ->
-                                        costs[state] <- cost
-                                        let next = { State = state; Cost = cost; ReversedSteps = activity.Id :: route.ReversedSteps }
+                                        costs[belief] <- cost
+                                        let next =
+                                            { Belief = belief
+                                              Cost = cost
+                                              ReversedSteps = activity.Id :: route.ReversedSteps }
                                         enqueue next
-                                        if isGoal catalog state then
+                                        if (goal catalog optimistic belief).IsSome then
                                             match bestComplete with
                                             | Some best when best.Cost <= cost -> ()
                                             | _ -> bestComplete <- Some next
 
         match failure with
         | Some error -> Error [ error ]
-        | None ->
-            outcome
-            |> Option.defaultValue (NoCompleteModeledRouteFound { ExpandedStates = expanded; StoppingReason = FrontierExhausted })
-            |> Ok
+        | None -> Ok(ending |> Option.defaultValue Exhausted, expanded)
+
+    let private personalPlan catalog assumptions route =
+        { Assumptions = assumptions
+          Steps =
+            route.ReversedSteps
+            |> List.rev
+            |> List.map (fun id -> { ActivityId = id; EstimatedMilliseconds = catalog.DurationEstimatesMs[id] })
+          TotalEstimatedMilliseconds = route.Cost
+          FinalKnowledge = route.Belief.Current }
+
+    let private classify catalog assumptions knowledge budget =
+        let unknowns = Bounds.unknowns knowledge |> Set.ofList
+        let pass optimistic spent limit =
+            explore catalog knowledge optimistic (budget.MaxExpandedStates - spent) limit
+            |> Result.map (fun (ending, expanded) -> ending, spent + expanded)
+        let report spent reason = { ExpandedStates = spent; StoppingReason = reason }
+        let plan = personalPlan catalog assumptions
+
+        let necessity (route: Route) spent =
+            let folder state fact =
+                state
+                |> Result.bind (fun (spent, necessary, mayRelyOn, limited) ->
+                    pass (Set.remove fact unknowns) spent None
+                    |> Result.map (fun (ending, spent) ->
+                        match ending with
+                        | Exhausted -> spent, Set.add fact necessary, mayRelyOn, limited
+                        | Reached alternative -> spent, necessary, Set.union mayRelyOn alternative.Belief.Relied, limited
+                        | OutOfBudget _ -> spent, necessary, Set.add fact mayRelyOn, true))
+            route.Belief.Relied
+            |> Set.fold folder (Ok(spent, Set.empty, route.Belief.Relied, false))
+            |> Result.map (fun (spent, necessary, mayRelyOn, limited) ->
+                let report = report spent (if limited then ExpansionBudgetExhausted else FrontierExhausted)
+                if Set.isEmpty necessary then
+                    NoCompleteModeledRouteFound(report, Set.toList mayRelyOn)
+                else
+                    NeedsAccountInformation(Set.toList necessary, report))
+
+        pass Set.empty 0 None
+        |> Result.bind (fun (ending, spent) ->
+            match ending with
+            | Reached route when Set.isEmpty unknowns -> Ok(ProvenFastest(plan route, report spent MinimumCostGoalSelected))
+            | Reached route ->
+                pass unknowns spent (Some route.Cost)
+                |> Result.map (fun (check, spent) ->
+                    match check with
+                    | Reached cheaper -> BestFound(plan route, report spent MinimumCostGoalSelected, Set.toList cheaper.Belief.Relied)
+                    | OutOfBudget _ -> BestFound(plan route, report spent ExpansionBudgetExhausted, [])
+                    | Exhausted -> ProvenFastest(plan route, report spent MinimumCostGoalSelected))
+            | OutOfBudget(Some best) -> Ok(BestFound(plan best, report spent ExpansionBudgetExhausted, []))
+            | OutOfBudget None -> Ok(NoCompleteModeledRouteFound(report spent ExpansionBudgetExhausted, []))
+            | Exhausted when Set.isEmpty unknowns -> Ok(NoCompleteModeledRouteFound(report spent FrontierExhausted, []))
+            | Exhausted ->
+                pass unknowns spent None
+                |> Result.bind (fun (diagnosis, spent) ->
+                    match diagnosis with
+                    | Reached route -> necessity route spent
+                    | OutOfBudget _ -> Ok(NoCompleteModeledRouteFound(report spent ExpansionBudgetExhausted, []))
+                    | Exhausted -> Ok(NoCompleteModeledRouteFound(report spent FrontierExhausted, []))))
 
     let private verifyPlan catalog knowledge (plan: PersonalPlan) =
         let activities = catalog.Activities |> List.map (fun activity -> activity.Id, activity) |> Map.ofList
+        let complete belief = (goal catalog Set.empty belief).IsSome
         let invalid message = Error(ReplayVerificationFailed message)
         let replayStep result step =
             result
-            |> Result.bind (fun (state, cost) ->
-                if isGoal catalog state then
+            |> Result.bind (fun (belief, cost) ->
+                if complete belief then
                     invalid "Route continues after goal completion."
                 else
                     match Map.tryFind step.ActivityId activities with
@@ -128,28 +253,29 @@ module Planning =
                         if step.EstimatedMilliseconds <> catalog.DurationEstimatesMs[activity.Id] then
                             invalid "Step duration differs from the supplied estimate."
                         else
-                            match transition catalog state activity with
-                            | None -> invalid "Route has an infeasible requirement or resource effect."
+                            match transition catalog Set.empty belief activity with
+                            | None -> invalid "Route has a requirement, resource input, or space that is not guaranteed."
                             | Some next -> addCost catalog cost activity.Id |> Result.map (fun total -> next, total))
 
         plan.Steps
-        |> List.fold replayStep (Ok(knowledge, 0L))
-        |> Result.bind (fun (state, cost) ->
-            if not (isGoal catalog state) then invalid "Route does not complete the goal."
-            elif state <> plan.FinalKnowledge then invalid "Replayed knowledge differs from the route result."
+        |> List.fold replayStep (Ok(believe catalog knowledge, 0L))
+        |> Result.bind (fun (belief, cost) ->
+            if not (complete belief) then invalid "Route does not complete the goal."
+            elif belief.Current <> plan.FinalKnowledge then invalid "Replayed knowledge differs from the route result."
             elif cost <> plan.TotalEstimatedMilliseconds then invalid "Replayed total differs from the route cost."
             else Ok())
 
-    let plan catalog knowledge budget =
-        match Validation.inputs catalog knowledge budget with
-        | [] ->
-            search catalog knowledge budget
+    let plan catalog (snapshot: AccountSnapshot) budget =
+        match Validation.inputs catalog snapshot budget with
+        | Error errors -> Error(List.map InvalidInput errors)
+        | Ok knowledge ->
+            classify catalog snapshot.Assumptions knowledge budget
             |> Result.bind (fun outcome ->
                 match outcome with
                 | ProvenFastest(plan, _)
-                | BestFound(plan, _) ->
+                | BestFound(plan, _, _) ->
                     verifyPlan catalog knowledge plan
                     |> Result.mapError List.singleton
                     |> Result.map (fun () -> outcome)
+                | NeedsAccountInformation _
                 | NoCompleteModeledRouteFound _ -> Ok outcome)
-        | errors -> Error(List.map InvalidInput errors)

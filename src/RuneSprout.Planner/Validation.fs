@@ -5,8 +5,10 @@ open System
 module internal Validation =
     let private keys map = map |> Map.toSeq |> Seq.map fst |> Set.ofSeq
 
-    let inputs (catalog: PlanningCatalog) (knowledge: AccountKnowledge) budget =
-        let resources = keys catalog.ResourceCapacities
+    let private structure (catalog: PlanningCatalog) (snapshot: AccountSnapshot) budget =
+        let knowledge = snapshot.Knowledge
+        let resources = keys catalog.ResourceLimits
+        let spaces = catalog.ResourceLimits |> Map.toList |> List.choose (function _, OccupiesSpace space -> Some space | _ -> None) |> Set.ofList
         let activityIds = catalog.Activities |> List.map (fun activity -> activity.Id)
         let activityIdSet = Set.ofList activityIds
         let invalid message = InvalidCatalog message
@@ -19,21 +21,35 @@ module internal Validation =
         let quantity id count =
             [ yield! resource id
               if count < 0L then invalid (sprintf "Quantity for %A must be nonnegative." id) ]
+        let effect id count =
+            [ yield! quantity id count
+              if Set.contains id spaces then invalid (sprintf "Activities change %A only through the resources that occupy it." id) ]
         let requirement = function
             | AtLocation id -> location id
             | FactIs(id, _) -> fact id
             | ResourceAtLeast(id, count) -> quantity id count
         let identifier kind value =
             [ if String.IsNullOrWhiteSpace value then invalid (sprintf "%s identifier must not be blank." kind) ]
+        let account message = InvalidAccountKnowledge message
+        let accountReference kind declared id =
+            [ if not (Set.contains id declared) then account (sprintf "Undeclared %s: %A." kind id) ]
+        let count id = function
+            | Exactly value
+            | AtLeast value -> [ if value < 0L then account (sprintf "Count for %A must be nonnegative." id) ]
 
         [ if budget.MaxExpandedStates <= 0 then
               InvalidSearchBudget budget.MaxExpandedStates
           if Set.isEmpty catalog.Locations then invalid "At least one location is required."
           for LocationId id in catalog.Locations do yield! identifier "Location" id
           for FactId id in catalog.Facts do yield! identifier "Fact" id
-          for KeyValue(ResourceId id, capacity) in catalog.ResourceCapacities do
+          for KeyValue(ResourceId id, limit) in catalog.ResourceLimits do
               yield! identifier "Resource" id
-              if capacity < 0L then invalid (sprintf "Capacity for %s must be nonnegative." id)
+              match limit with
+              | Capacity capacity -> if capacity < 0L then invalid (sprintf "Capacity for %s must be nonnegative." id)
+              | OccupiesSpace space ->
+                  match Map.tryFind space catalog.ResourceLimits with
+                  | Some(Capacity _) -> ()
+                  | _ -> invalid (sprintf "Space occupied by %s must be a declared capacity resource." id)
           if activityIds.Length <> activityIdSet.Count then invalid "Activity identifiers must be unique."
           if keys catalog.DurationEstimatesMs <> activityIdSet then
               invalid "Duration estimates must name exactly the catalog activities."
@@ -44,21 +60,67 @@ module internal Validation =
               let (ActivityId id) = activity.Id
               yield! identifier "Activity" id
               for condition in activity.Requirements do yield! requirement condition
-              for KeyValue(id, count) in activity.Consumes do yield! quantity id count
-              for KeyValue(id, count) in activity.Produces do yield! quantity id count
+              for KeyValue(id, count) in activity.Consumes do yield! effect id count
+              for KeyValue(id, count) in activity.Produces do yield! effect id count
               for KeyValue(id, _) in activity.FactChanges do yield! fact id
               match activity.Destination with
               | Some id -> yield! location id
               | None -> ()
-          if not (Set.contains knowledge.Location catalog.Locations) then
-              InvalidAccountKnowledge "Starting location must be a declared location."
+          match knowledge.Location with
+          | Known id -> yield! accountReference "location" catalog.Locations id
+          | Unknown -> ()
           if keys knowledge.Facts <> catalog.Facts then
-              InvalidAccountKnowledge "Explicit values are required for exactly the declared facts; partial knowledge is not supported yet."
+              account "Knowledge must state a known or unknown value for exactly the declared facts."
           if keys knowledge.Resources <> resources then
-              InvalidAccountKnowledge "Exact counts are required for exactly the declared resources; partial knowledge is not supported yet."
-          for KeyValue(id, count) in knowledge.Resources do
-              if count < 0L then InvalidAccountKnowledge(sprintf "Count for %A must be nonnegative." id)
-              match Map.tryFind id catalog.ResourceCapacities with
-              | Some capacity when count > capacity ->
-                  InvalidAccountKnowledge(sprintf "Count for %A exceeds its modeled capacity." id)
-              | _ -> () ]
+              account "Knowledge must state an exact count or lower bound for exactly the declared resources."
+          for KeyValue(id, quantity) in knowledge.Resources do yield! count id quantity
+          for assumption in snapshot.Assumptions do
+              match assumption with
+              | AssumeLocation id -> yield! accountReference "location" catalog.Locations id
+              | AssumeFact(id, _) -> yield! accountReference "fact" catalog.Facts id
+              | AssumeResource(id, quantity) ->
+                  yield! accountReference "resource" resources id
+                  yield! count id quantity ]
+
+    let private settle current value =
+        match current with
+        | Unknown -> Some(Known value)
+        | Known known when known = value -> Some current
+        | Known _ -> None
+
+    let private refine current assumed =
+        match current, assumed with
+        | Exactly known, Exactly value when known = value -> Some current
+        | Exactly known, AtLeast value when known >= value -> Some current
+        | AtLeast known, Exactly value when value >= known -> Some assumed
+        | AtLeast known, AtLeast value -> Some(AtLeast(max known value))
+        | _ -> None
+
+    let private assume catalog (knowledge: AccountKnowledge) assumption =
+        let refined =
+            match assumption with
+            | AssumeLocation location ->
+                settle knowledge.Location location |> Option.map (fun value -> { knowledge with Location = value })
+            | AssumeFact(fact, value) ->
+                settle knowledge.Facts[fact] value
+                |> Option.map (fun value -> { knowledge with Facts = Map.add fact value knowledge.Facts })
+            | AssumeResource(resource, quantity) ->
+                refine knowledge.Resources[resource] quantity
+                |> Option.map (fun value -> { knowledge with Resources = Map.add resource value knowledge.Resources })
+        match refined with
+        | Some next when Bounds.consistent catalog next -> Ok next
+        | _ -> Error [ ContradictoryAssumption assumption ]
+
+    let inputs catalog (snapshot: AccountSnapshot) budget =
+        match structure catalog snapshot budget with
+        | [] ->
+            match Bounds.overfull catalog (Bounds.lowers snapshot.Knowledge) with
+            | [] -> snapshot.Assumptions |> List.fold (fun knowledge assumption -> Result.bind (fun current -> assume catalog current assumption) knowledge) (Ok snapshot.Knowledge)
+            | resources ->
+                Error
+                    [ for resource in resources ->
+                          InvalidAccountKnowledge(
+                              match Bounds.occupants catalog resource with
+                              | [] -> sprintf "Count for %A exceeds its modeled capacity." resource
+                              | _ -> sprintf "Counts for %A and the resources occupying it exceed its modeled capacity." resource) ]
+        | errors -> Error errors
