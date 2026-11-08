@@ -304,6 +304,31 @@ let ``an unknown count is never assumed larger than its storage could have held`
     | Ok(NeedsAccountInformation(necessary, _)) -> Assert.Equal<AccountFact list>([ ResourceQuantity stock ], necessary)
     | other -> failwithf "Expected a request for the stock count, got %A" other
 
+[<Fact>]
+let ``room freed from an unknown count is guaranteed room`` () =
+    let stock, spent = ResourceId "stock", FactId "spent"
+    let refill =
+        world
+            [ spent ]
+            [ stock, Capacity 2L ]
+            [ FactIs(complete, true) ]
+            [ activity "spend" [] [ stock, 1L ] [] [ spent, true ]
+              activity "refill" [ FactIs(spent, true) ] [] [ stock, 1L ] [ complete, true ] ]
+            [ "spend", 1L; "refill", 1L ]
+
+    let plan, _ = planFrom refill (knowledge (Known home) [ spent, Known false ] [ stock, AtLeast 1L ]) |> proven
+    Assert.Equal<ActivityId list>(steps [ "spend"; "refill" ], stepIds plan)
+    Assert.Equal(AtLeast 1L, plan.FinalKnowledge.Resources[stock])
+
+[<Fact>]
+let ``an unknown location in a one-location world is not missing information`` () =
+    let errand =
+        { world [] [] [ FactIs(complete, true) ] [ activity "finish" [ AtLocation home ] [] [] [ complete, true ] ] [ "finish", 1L ] with
+            Locations = Set.singleton home }
+
+    let plan, _ = planFrom errand (knowledge Unknown [] []) |> proven
+    Assert.Equal<ActivityId list>(steps [ "finish" ], stepIds plan)
+
 let private bankChoice =
     world
         []
